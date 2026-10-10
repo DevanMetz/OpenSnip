@@ -91,11 +91,14 @@ static class ImageOps
         return path;
     }
 
-    public static string SaveAuto(byte[] png, string folder)
+    /// <summary>Saves a snip into <paramref name="folder"/> as PNG (reusing already-encoded bytes) or JPG.</summary>
+    public static string SaveAuto(Bitmap b, byte[] png, string folder, string format)
     {
         Directory.CreateDirectory(folder);
-        string path = UniquePath(folder, NewFileName(), ".png");
-        File.WriteAllBytes(path, png);
+        bool jpg = format == "jpg";
+        string path = UniquePath(folder, NewFileName(), jpg ? ".jpg" : ".png");
+        if (jpg) Save(b, path);
+        else File.WriteAllBytes(path, png ?? Png(b));
         return path;
     }
 
@@ -145,6 +148,14 @@ static class ImageOps
         }
     }
 
+    /// <summary>A file on the clipboard / in a drag, the way Explorer does it.</summary>
+    public static DataObject FileData(string path)
+    {
+        var data = new DataObject();
+        data.SetFileDropList(new StringCollection { path });
+        return data;
+    }
+
     public static DataObject DragData(Bitmap b, string path)
     {
         var data = new DataObject();
@@ -180,11 +191,12 @@ static class Theme
     public static readonly Color Text = Color.FromArgb(235, 235, 240);
     public static readonly Color Muted = Color.FromArgb(150, 150, 160);
     public static readonly Color Good = Color.FromArgb(120, 220, 140);
+    public static readonly Color Record = Color.FromArgb(240, 68, 56);
 }
 
 static class AppIcon
 {
-    public static Bitmap Render(int size)
+    public static Bitmap Render(int size, bool recording = false)
     {
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -205,12 +217,21 @@ static class AppIcon
         g.DrawLines(pen, new[] { new PointF(b - l, a), new PointF(b, a), new PointF(b, a + l) });
         g.DrawLines(pen, new[] { new PointF(a, b - l), new PointF(a, b), new PointF(a + l, b) });
         g.DrawLines(pen, new[] { new PointF(b - l, b), new PointF(b, b), new PointF(b, b - l) });
+
+        if (recording)
+        {
+            float d = 15 * s;
+            using var ring = new SolidBrush(Color.White);
+            using var dot = new SolidBrush(Theme.Record);
+            g.FillEllipse(ring, 32 * s - d - 1.5f * s, 32 * s - d - 1.5f * s, d + 3 * s, d + 3 * s);
+            g.FillEllipse(dot, 32 * s - d, 32 * s - d, d, d);
+        }
         return bmp;
     }
 
-    public static Icon Get(int size)
+    public static Icon Get(int size, bool recording = false)
     {
-        using var b = Render(size);
+        using var b = Render(size, recording);
         IntPtr h = b.GetHicon();
         try { return (Icon)Icon.FromHandle(h).Clone(); }
         finally { Native.DestroyIcon(h); }

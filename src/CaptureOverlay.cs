@@ -12,7 +12,12 @@ sealed class CaptureOverlay : Form
     /// <summary>Raised with the cropped image and its rectangle in screen coordinates.</summary>
     public event Action<Bitmap, Rectangle> Captured;
 
-    const string HintText = "Drag to snip   ·   Click a window   ·   F  full screen   ·   Esc  cancel";
+    /// <summary>Record mode: raised with the chosen area (screen coordinates) instead of <see cref="Captured"/>.</summary>
+    public event Action<Rectangle> AreaChosen;
+
+    string HintText => record
+        ? "Drag the area to record   ·   Click a window   ·   F  full screen   ·   Esc  cancel"
+        : "Drag to snip   ·   Click a window   ·   F  full screen   ·   Esc  cancel";
     const int Cells = 15; // magnifier grid size (odd, so there's a center pixel)
 
     readonly Rectangle vs;            // virtual screen, screen coordinates
@@ -23,6 +28,8 @@ sealed class CaptureOverlay : Form
     readonly int bw;
     readonly Font labelFont, hintFont;
     readonly int infoTextWidth;
+    readonly bool record, magnifier;
+    Color FrameColor => record ? Theme.Record : Theme.Accent2;
 
     bool mouseDown, dragging, done;
     Point dragStart, cursor;
@@ -30,10 +37,12 @@ sealed class CaptureOverlay : Form
 
     readonly record struct Frame(Rectangle Sel, Rectangle Hint, Rectangle[] Dyn);
 
-    public CaptureOverlay(Bitmap shot, Rectangle virtualScreen, List<Rectangle> windows)
+    public CaptureOverlay(Bitmap shot, Rectangle virtualScreen, List<Rectangle> windows, bool record = false, bool magnifier = true)
     {
         vs = virtualScreen;
         this.windows = windows;
+        this.record = record;
+        this.magnifier = magnifier;
 
         int w = shot.Width, h = shot.Height;
         bright = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
@@ -86,6 +95,12 @@ sealed class CaptureOverlay : Form
         // One window spans every monitor; never let WinForms rescale it when DPIs differ.
         if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
         base.WndProc(ref m);
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Native.ExcludeFromCapture(Handle); // never show up in a recording that's running
     }
 
     protected override void OnShown(EventArgs e)
@@ -194,7 +209,8 @@ sealed class CaptureOverlay : Form
     Frame Snapshot()
     {
         var sel = ActiveRect;
-        var dyn = new List<Rectangle> { Rectangle.Inflate(MagnifierRect(), 2, 2) };
+        var dyn = new List<Rectangle>();
+        if (magnifier) dyn.Add(Rectangle.Inflate(MagnifierRect(), 2, 2));
         if (!sel.IsEmpty) dyn.Add(Rectangle.Inflate(LabelRect(sel), 1, 1));
         var hint = HintRect();
         return new Frame(sel, hint.IsEmpty ? hint : Rectangle.Inflate(hint, 2, 2), dyn.ToArray());
@@ -296,7 +312,7 @@ sealed class CaptureOverlay : Form
                 Complete(MonitorAt(cursor));
                 break;
             case Keys.A:
-                Complete(new Rectangle(Point.Empty, ClientSize));
+                Complete(record ? MonitorAt(cursor) : new Rectangle(Point.Empty, ClientSize)); // recordings are one monitor
                 break;
             case Keys.Left: Nudge(-step, 0); break;
             case Keys.Right: Nudge(step, 0); break;
@@ -327,11 +343,15 @@ sealed class CaptureOverlay : Form
         r = Rectangle.Intersect(r, new Rectangle(Point.Empty, bright.Size));
         if (r.Width < 1 || r.Height < 1) return;
         done = true;
-        var bmp = bright.Clone(r, PixelFormat.Format24bppRgb);
-        bmp.SetResolution(96, 96);
         var screenRect = new Rectangle(r.X + vs.X, r.Y + vs.Y, r.Width, r.Height);
         Hide();
-        Captured?.Invoke(bmp, screenRect);
+        if (record) AreaChosen?.Invoke(screenRect);
+        else
+        {
+            var bmp = bright.Clone(r, PixelFormat.Format24bppRgb);
+            bmp.SetResolution(96, 96);
+            Captured?.Invoke(bmp, screenRect);
+        }
         Close();
     }
 
@@ -367,13 +387,13 @@ sealed class CaptureOverlay : Form
         g.CompositingMode = CompositingMode.SourceOver;
         if (!sel.IsEmpty) DrawFrame(g, sel);
         if (!mouseDown) DrawPill(g, HintRect(), HintText, hintFont, Color.FromArgb(225, 22, 22, 26), Theme.Text);
-        DrawMagnifier(g);
+        if (magnifier) DrawMagnifier(g);
     }
 
     void DrawFrame(Graphics g, Rectangle sel)
     {
         var o = Rectangle.Inflate(sel, bw, bw);
-        using (var b = new SolidBrush(Theme.Accent2))
+        using (var b = new SolidBrush(FrameColor))
         {
             g.FillRectangle(b, o.X, o.Y, o.Width, bw);
             g.FillRectangle(b, o.X, sel.Bottom, o.Width, bw);

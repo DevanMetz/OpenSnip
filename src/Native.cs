@@ -134,6 +134,14 @@ static class Native
         else SetForegroundWindow(hwnd);
     }
 
+    [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+
+    /// <summary>Hides a window from screenshots and recordings (Windows 10 2004+). It stays visible on screen.</summary>
+    public static void ExcludeFromCapture(IntPtr hwnd)
+    {
+        try { SetWindowDisplayAffinity(hwnd, 0x11 /* WDA_EXCLUDEFROMCAPTURE */); } catch { }
+    }
+
     public static void SetDarkTitleBar(IntPtr hwnd)
     {
         int on = 1;

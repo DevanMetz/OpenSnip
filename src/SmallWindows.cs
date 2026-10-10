@@ -23,6 +23,7 @@ abstract class Popup : Form
     protected override bool ShowWithoutActivation => true;
 
     protected virtual bool ClickThrough => false;
+    protected virtual int CornerPreference => Native.DWMWCP_ROUND;
 
     protected override CreateParams CreateParams
     {
@@ -38,7 +39,7 @@ abstract class Popup : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        Native.SetCorners(Handle, Native.DWMWCP_ROUND);
+        Native.SetCorners(Handle, CornerPreference);
     }
 
     protected override void WndProc(ref Message m)
@@ -105,6 +106,8 @@ sealed class ThumbnailForm : Popup
     readonly Bitmap img;
     readonly string path;
     readonly Rectangle source;
+    readonly bool video, copied;
+    readonly int lifetimeMs;
     readonly System.Windows.Forms.Timer timer = new() { Interval = 30 };
     readonly Font font;
     readonly Rectangle imgRect;
@@ -112,13 +115,16 @@ sealed class ThumbnailForm : Popup
     bool hovering, pressed;
     Point pressAt;
 
-    const int LifetimeMs = 6000;
-
-    public ThumbnailForm(Bitmap img, string path, Rectangle source) : base(Center(source))
+    /// <param name="video">True when <paramref name="path"/> is a recording; <paramref name="img"/> is then just a still of it.</param>
+    public ThumbnailForm(Bitmap img, string path, Rectangle source, bool copied, int seconds, bool video = false)
+        : base(Center(source))
     {
         this.img = img;
         this.path = path;
         this.source = source;
+        this.copied = copied;
+        this.video = video;
+        lifetimeMs = Math.Max(1, seconds) * 1000;
         font = new Font("Segoe UI", 11.5f * s, GraphicsUnit.Pixel);
 
         float maxW = 280 * s, maxH = 180 * s;
@@ -144,7 +150,7 @@ sealed class ThumbnailForm : Popup
     {
         if (hovering || pressed) { lifeMs = 0; Opacity = 1; return; }
         lifeMs += timer.Interval;
-        if (lifeMs < LifetimeMs) return;
+        if (lifeMs < lifetimeMs) return;
         Opacity -= 0.08;
         if (Opacity <= 0.05) Close();
     }
@@ -166,7 +172,8 @@ sealed class ThumbnailForm : Popup
         pressed = false;
         try
         {
-            var result = DoDragDrop(ImageOps.DragData(img, path), DragDropEffects.Copy);
+            var data = video ? ImageOps.FileData(path) : ImageOps.DragData(img, path);
+            var result = DoDragDrop(data, DragDropEffects.Copy);
             if (result != DragDropEffects.None) Close();
         }
         catch (Exception ex) { Log.Error(ex); }
@@ -176,7 +183,12 @@ sealed class ThumbnailForm : Popup
     {
         if (!pressed || e.Button != MouseButtons.Left) return;
         pressed = false;
-        TrayApp.Instance.OpenEditor((Bitmap)img.Clone(), source);
+        if (video)
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
+            catch (Exception ex) { Log.Error(ex); }
+        }
+        else TrayApp.Instance.OpenEditor((Bitmap)img.Clone(), source);
         Close();
     }
 
@@ -189,12 +201,30 @@ sealed class ThumbnailForm : Popup
         g.DrawImage(img, imgRect, 0, 0, img.Width, img.Height, GraphicsUnit.Pixel);
         using (var p = new Pen(Color.FromArgb(70, 255, 255, 255)))
             g.DrawRectangle(p, imgRect.X - 1, imgRect.Y - 1, imgRect.Width + 1, imgRect.Height + 1);
+        if (video) DrawPlayBadge(g);
 
         var bar = new Rectangle(0, imgRect.Bottom + (int)(4 * s), Width, Height - imgRect.Bottom - (int)(4 * s));
-        string text = hovering ? "Click to edit  ·  Drag to drop  ·  Right-click to close" : "✓ Copied to clipboard";
+        string text = hovering
+            ? $"Click to {(video ? "play" : "edit")}  ·  Drag to drop  ·  Right-click to close"
+            : video ? (copied ? "✓ Recording saved & copied" : "✓ Recording saved")
+            : copied ? "✓ Copied to clipboard" : path != null ? "✓ Saved" : "Click to edit";
         var color = hovering ? Theme.Text : Theme.Good;
         TextRenderer.DrawText(g, text, font, bar, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+    }
+
+    void DrawPlayBadge(Graphics g)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        float d = Math.Min(44 * s, Math.Min(imgRect.Width, imgRect.Height) * 0.6f);
+        var c = new PointF(imgRect.X + imgRect.Width / 2f, imgRect.Y + imgRect.Height / 2f);
+        using (var b = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
+            g.FillEllipse(b, c.X - d / 2, c.Y - d / 2, d, d);
+        float t = d * 0.22f;
+        g.FillPolygon(Brushes.White, new[]
+        {
+            new PointF(c.X - t * 0.8f, c.Y - t), new PointF(c.X - t * 0.8f, c.Y + t), new PointF(c.X + t * 1.1f, c.Y),
+        });
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -207,12 +237,16 @@ sealed class ThumbnailForm : Popup
 }
 
 /// <summary>
-/// An always-on-top floating copy of an image. Drag to move, scroll to zoom,
-/// Ctrl+scroll for opacity, double-click or Esc to close, right-click for more.
+/// An always-on-top floating copy of an image. Drag to move, drag a corner or edge to resize
+/// (Shift to stretch freely), scroll to zoom, Ctrl+scroll for opacity, double-click or Esc
+/// to close, right-click for more.
 /// </summary>
 sealed class PinForm : Form
 {
+    const int WM_NCHITTEST = 0x84, WM_SIZING = 0x214, HTCLIENT = 1;
+
     readonly Bitmap img;
+    readonly float s;
     float zoom = 1f;
     bool dragging;
     Point grab;
@@ -220,6 +254,7 @@ sealed class PinForm : Form
     public PinForm(Bitmap img, Point location)
     {
         this.img = img;
+        s = Native.ScaleAt(location);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
@@ -235,8 +270,7 @@ sealed class PinForm : Form
         menu.Items.Add("Copy", null, (_, _) => ImageOps.CopyToClipboard(img));
         menu.Items.Add("Save as…", null, (_, _) => ImageOps.SaveAs(this, img, TrayApp.Instance.Settings.SaveFolder));
         menu.Items.Add("Edit", null, (_, _) => { TrayApp.Instance.OpenEditor((Bitmap)img.Clone(), null); Close(); });
-        menu.Items.Add("Actual size", null, (_, _) => SetZoom(1f, new Point(Width / 2, Height / 2)));
-        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Actual size", null, (_, _) => SetZoom(1f, new Point(Width / 2, Height / 2)));        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Close", null, (_, _) => Close());
         ContextMenuStrip = menu;
     }
@@ -260,8 +294,64 @@ sealed class PinForm : Form
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
+        switch (m.Msg)
+        {
+            case Native.WM_DPICHANGED:
+                m.Result = IntPtr.Zero;
+                return;
+            case WM_NCHITTEST:
+                base.WndProc(ref m);
+                if ((int)m.Result == HTCLIENT) m.Result = (IntPtr)HitTest(m.LParam);
+                return;
+            case WM_SIZING:
+                if ((ModifierKeys & Keys.Shift) == 0) KeepAspect(m.WParam.ToInt32(), m.LParam);
+                m.Result = (IntPtr)1;
+                return;
+        }
         base.WndProc(ref m);
+    }
+
+    /// <summary>Corners and edges act as resize handles; everything else is the image.</summary>
+    int HitTest(IntPtr lParam)
+    {
+        long lp = lParam.ToInt64();
+        var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+        int grip = Math.Max(4, Math.Min((int)(10 * s), Math.Min(Width, Height) / 4));
+        bool l = p.X < grip, r = p.X >= Width - grip, t = p.Y < grip, b = p.Y >= Height - grip;
+        // Corners get a bigger target than edges, they're what people reach for.
+        int corner = grip * 2;
+        bool cl = p.X < corner, cr = p.X >= Width - corner, ct = p.Y < corner, cb = p.Y >= Height - corner;
+        if ((t && cl) || (l && ct)) return 13;  // HTTOPLEFT
+        if ((t && cr) || (r && ct)) return 14;  // HTTOPRIGHT
+        if ((b && cl) || (l && cb)) return 16;  // HTBOTTOMLEFT
+        if ((b && cr) || (r && cb)) return 17;  // HTBOTTOMRIGHT
+        if (l) return 10;
+        if (r) return 11;
+        if (t) return 12;
+        if (b) return 15;
+        return HTCLIENT;
+    }
+
+    /// <summary>Adjusts the rectangle Windows proposes while resizing so the image keeps its proportions.</summary>
+    void KeepAspect(int edge, IntPtr lParam)
+    {
+        var r = System.Runtime.InteropServices.Marshal.PtrToStructure<Native.RECT>(lParam);
+        double aspect = img.Width / (double)img.Height;
+        int w = Math.Max(16, r.Right - r.Left - 2), h = Math.Max(16, r.Bottom - r.Top - 2);
+        if (edge is 3 or 6) w = (int)Math.Round(h * aspect);  // top / bottom edge: height leads
+        else h = (int)Math.Round(w / aspect);                   // sides and corners: width leads
+
+        bool left = edge is 1 or 4 or 7, top = edge is 3 or 4 or 5;
+        if (left) r.Left = r.Right - (w + 2); else r.Right = r.Left + w + 2;
+        if (top) r.Top = r.Bottom - (h + 2); else r.Bottom = r.Top + h + 2;
+        System.Runtime.InteropServices.Marshal.StructureToPtr(r, lParam, false);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        zoom = Math.Max(0.01f, (ClientSize.Width - 2) / (float)img.Width);
+        Invalidate();
     }
 
     void SetZoom(float z, Point anchor)

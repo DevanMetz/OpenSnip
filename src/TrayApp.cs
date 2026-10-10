@@ -1,4 +1,4 @@
-using Microsoft.Win32;
+using System.Diagnostics;
 
 namespace OpenSnip;
 
@@ -6,8 +6,6 @@ sealed class TrayApp : ApplicationContext
 {
     public static TrayApp Instance { get; private set; }
     public Settings Settings { get; } = Settings.Load();
-
-    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     static volatile bool overlayOpen;
     volatile HotkeySet hotkeys;
@@ -19,7 +17,9 @@ sealed class TrayApp : ApplicationContext
     CaptureOverlay overlay;
     ThumbnailForm thumb;
     CountdownForm countdown;
-    ShortcutsForm shortcutsForm;
+    SettingsForm settingsForm;
+    RecordingSession recording;
+    Icon normalIcon, recordingIcon;
     Rectangle? lastRegion;
     bool busy;
 
@@ -32,11 +32,15 @@ sealed class TrayApp : ApplicationContext
 
         tray = new NotifyIcon
         {
-            Icon = AppIcon.Get(Native.SmallIconSize),
+            Icon = normalIcon = AppIcon.Get(Native.SmallIconSize),
             Visible = true,
             ContextMenuStrip = BuildMenu(),
         };
-        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) StartSnip(0, 250); };
+        tray.MouseClick += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (recording != null) recording.Stop(); else StartSnip(0, 250);
+        };
         UpdateTrayText();
 
         KeyboardHook.Start(OnKey, ok => Post(() =>
@@ -74,7 +78,9 @@ sealed class TrayApp : ApplicationContext
     void UpdateTrayText()
     {
         string keys = hotkeys.SnipDisplay;
-        tray.Text = keys != null ? $"OpenSnip — {keys} to snip" : "OpenSnip — click to snip";
+        tray.Text = recording != null ? "OpenSnip — recording (click to stop)"
+                  : keys != null ? $"OpenSnip — {keys} to snip"
+                  : "OpenSnip — click to snip";
     }
 
     /// <summary>Routes the next key combo pressed anywhere to <paramref name="onKey"/> (on the UI thread) instead of acting on it.</summary>
@@ -123,6 +129,7 @@ sealed class TrayApp : ApplicationContext
         if (pressed == hk.Snip) action = () => StartSnip();
         else if (pressed == hk.Delay) action = () => StartSnip(Settings.DelaySeconds);
         else if (pressed == hk.Repeat) action = RepeatLast;
+        else if (pressed == hk.Record) action = ToggleRecording;
         else if (printScreen)
             action = pressed.Ctrl ? RepeatLast : pressed.Shift ? () => StartSnip(Settings.DelaySeconds) : () => StartSnip();
         if (action == null) return false;
@@ -167,7 +174,7 @@ sealed class TrayApp : ApplicationContext
         ShowOverlay();
     }
 
-    void ShowOverlay()
+    void ShowOverlay(bool record = false)
     {
         if (overlay != null) return;
         Bitmap shot;
@@ -185,8 +192,9 @@ sealed class TrayApp : ApplicationContext
             return;
         }
 
-        overlay = new CaptureOverlay(shot, vs, windows);
+        overlay = new CaptureOverlay(shot, vs, windows, record, Settings.ShowMagnifier);
         overlay.Captured += (bmp, rect) => Post(() => Deliver(bmp, rect));
+        overlay.AreaChosen += rect => Post(() => BeginRecording(rect));
         overlay.FormClosed += (_, _) => { overlay = null; overlayOpen = false; };
         overlayOpen = true;
         overlay.Show();
@@ -204,30 +212,38 @@ sealed class TrayApp : ApplicationContext
     void Deliver(Bitmap bmp, Rectangle screenRect)
     {
         lastRegion = screenRect;
-        byte[] png = ImageOps.Png(bmp);
-        ImageOps.CopyToClipboard(bmp, png);
+        byte[] png = null;
+        if (Settings.CopyToClipboard)
+        {
+            png = ImageOps.Png(bmp);
+            ImageOps.CopyToClipboard(bmp, png);
+        }
 
         string path = null;
         if (Settings.AutoSave)
         {
-            try { path = ImageOps.SaveAuto(png, Settings.SaveFolder); }
+            try { path = ImageOps.SaveAuto(bmp, png, Settings.FolderFor(Settings.SaveFolder), Settings.SaveFormat); }
             catch (Exception ex)
             {
                 Log.Error(ex);
-                tray.ShowBalloonTip(5000, "OpenSnip", "Copied, but couldn't auto-save: " + ex.Message, ToolTipIcon.Warning);
+                tray.ShowBalloonTip(5000, "OpenSnip", "Couldn't auto-save: " + ex.Message, ToolTipIcon.Warning);
             }
         }
 
+        // If nothing was copied or saved, always show the preview so the snip isn't lost.
+        bool nowhere = !Settings.CopyToClipboard && path == null;
         if (Settings.OpenEditorAfterSnip) OpenEditor(bmp, screenRect);
-        else if (Settings.ShowThumbnail)
-        {
-            thumb?.Close();
-            var t = new ThumbnailForm(bmp, path, screenRect);
-            t.FormClosed += (_, _) => { if (thumb == t) thumb = null; };
-            thumb = t;
-            t.Show();
-        }
+        else if (Settings.ShowThumbnail || nowhere)
+            ShowThumb(new ThumbnailForm(bmp, path, screenRect, Settings.CopyToClipboard, Settings.PreviewSeconds));
         else bmp.Dispose();
+    }
+
+    void ShowThumb(ThumbnailForm t)
+    {
+        thumb?.Close();
+        t.FormClosed += (_, _) => { if (thumb == t) thumb = null; };
+        thumb = t;
+        t.Show();
     }
 
     public void OpenEditor(Bitmap bmp, Rectangle? source)
@@ -281,70 +297,150 @@ sealed class TrayApp : ApplicationContext
         }
     }
 
+    // ---------- recording ----------
+
+    public async void ToggleRecording()
+    {
+        if (recording != null) { recording.Stop(); return; }
+        if (!await ClearStage(0)) return;
+        ShowOverlay(record: true);
+    }
+
+    async void ToggleRecordingFromMenu()
+    {
+        await Task.Delay(250); // let the menu disappear first
+        ToggleRecording();
+    }
+
+    void BeginRecording(Rectangle area)
+    {
+        // Recordings cover one monitor, and H.264 needs even dimensions.
+        var screen = Screen.FromRectangle(area);
+        area = Rectangle.Intersect(area, screen.Bounds);
+        area.Width &= ~1;
+        area.Height &= ~1;
+        if (area.Width < 16 || area.Height < 16)
+        {
+            tray.ShowBalloonTip(3000, "OpenSnip", "That area is too small to record.", ToolTipIcon.Info);
+            return;
+        }
+
+        try { RecorderDevices.EnsureAvailable(); }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            tray.ShowBalloonTip(10000, "Screen recording isn't available",
+                "It needs the Microsoft Visual C++ Redistributable (x64): aka.ms/vs/17/release/vc_redist.x64.exe", ToolTipIcon.Error);
+            return;
+        }
+
+        RecordingSession session;
+        try { session = new RecordingSession(area, Settings, ui); }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            tray.ShowBalloonTip(6000, "OpenSnip", "Couldn't start recording: " + ex.Message, ToolTipIcon.Error);
+            return;
+        }
+        session.Saved += OnRecordingSaved;
+        session.Failed += error => tray.ShowBalloonTip(8000, "Recording failed", error, ToolTipIcon.Error);
+        session.Ended += () =>
+        {
+            recording = null;
+            tray.Icon = normalIcon;
+            UpdateTrayText();
+        };
+        recording = session;
+        recordingIcon ??= AppIcon.Get(Native.SmallIconSize, recording: true);
+        tray.Icon = recordingIcon;
+        UpdateTrayText();
+        try { session.Begin(); }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            tray.ShowBalloonTip(6000, "OpenSnip", "Couldn't start recording: " + ex.Message, ToolTipIcon.Error);
+            session.Discard();
+        }
+    }
+
+    void OnRecordingSaved(string path, Bitmap still, Rectangle area)
+    {
+        if (Settings.CopyRecordingToClipboard)
+        {
+            try { Clipboard.SetDataObject(ImageOps.FileData(path), true, 10, 50); }
+            catch (Exception ex) { Log.Error(ex); }
+        }
+        still ??= new Bitmap(Math.Max(1, area.Width), Math.Max(1, area.Height));
+        ShowThumb(new ThumbnailForm(still, path, area, Settings.CopyRecordingToClipboard,
+            Math.Max(Settings.PreviewSeconds, 8), video: true));
+    }
+
     // ---------- tray menu ----------
 
     ContextMenuStrip BuildMenu()
     {
-        var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = true };
+        var m = new ContextMenuStrip { ShowImageMargin = false };
 
-        var snip = Item(m, "Snip", null, () => StartSnip(0, 250));
+        var snip = Item(m, "Snip", () => StartSnip(0, 250));
         snip.Font = new Font(m.Font, FontStyle.Bold);
-        var delayed = Item(m, "Snip after delay", null, () => StartSnip(Settings.DelaySeconds, 250));
-        var repeat = Item(m, "Repeat last region", null, () => { RepeatLastFromMenu(); });
-        Item(m, "Pin image from clipboard", null, PinClipboard);
-        Item(m, "Open image in editor…", null, EditFile);
+        var record = Item(m, "Record video", ToggleRecordingFromMenu);
+        var delayed = Item(m, "Snip after delay", () => StartSnip(Settings.DelaySeconds, 250));
+        var repeat = Item(m, "Repeat last region", RepeatLastFromMenu);
         m.Items.Add(new ToolStripSeparator());
 
-        Item(m, "Keyboard shortcuts…", null, ShowShortcuts);
-
-        Check(m, "Auto-save snips", () => Settings.AutoSave, v => Settings.AutoSave = v);
-        Item(m, "Open snips folder", null, () =>
-        {
-            Directory.CreateDirectory(Settings.SaveFolder);
-            System.Diagnostics.Process.Start("explorer.exe", $"\"{Settings.SaveFolder}\"");
-        });
-        Item(m, "Change snips folder…", null, ChangeFolder);
-        Check(m, "Show preview after snip", () => Settings.ShowThumbnail, v => Settings.ShowThumbnail = v);
-        Check(m, "Open editor after every snip", () => Settings.OpenEditorAfterSnip, v => Settings.OpenEditorAfterSnip = v);
-
-        var delayMenu = new ToolStripMenuItem("Delay length");
-        foreach (int sec in new[] { 1, 3, 5, 10 })
-        {
-            var it = new ToolStripMenuItem($"{sec} second{(sec == 1 ? "" : "s")}") { Tag = sec };
-            it.Click += (_, _) => { Settings.DelaySeconds = sec; Settings.Save(); };
-            delayMenu.DropDownItems.Add(it);
-        }
-        m.Items.Add(delayMenu);
-        Check(m, "Start with Windows", () => StartupEnabled, SetStartup);
+        Item(m, "Pin image from clipboard", PinClipboard);
+        Item(m, "Open image in editor…", EditFile);
+        Item(m, "Open screenshots folder", () => OpenFolder(Settings.SaveFolder));
+        Item(m, "Open recordings folder", () => OpenFolder(Settings.VideoFolder));
         m.Items.Add(new ToolStripSeparator());
-        Item(m, "About OpenSnip", null, () =>
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/DevanMetz/OpenSnip") { UseShellExecute = true }));
-        Item(m, "Exit", null, Exit);
+
+        Item(m, "Settings…", () => ShowSettings());
+        Item(m, "Exit", Exit);
 
         m.Opening += (_, _) =>
         {
             var hk = hotkeys;
             snip.ShortcutKeyDisplayString = hk.SnipDisplay;
+            record.ShortcutKeyDisplayString = hk.RecordDisplay;
+            record.Text = recording != null ? "Stop recording" : "Record video";
             delayed.ShortcutKeyDisplayString = hk.DelayDisplay;
-            repeat.ShortcutKeyDisplayString = hk.RepeatDisplay;
             delayed.Text = $"Snip in {Settings.DelaySeconds} second{(Settings.DelaySeconds == 1 ? "" : "s")}";
-            foreach (ToolStripMenuItem it in delayMenu.DropDownItems) it.Checked = (int)it.Tag == Settings.DelaySeconds;
-            foreach (var it in m.Items.OfType<ToolStripMenuItem>())
-                if (it.Tag is Func<bool> get) it.Checked = get();
+            repeat.ShortcutKeyDisplayString = hk.RepeatDisplay;
         };
         return m;
     }
 
-    void ShowShortcuts()
+    static ToolStripMenuItem Item(ContextMenuStrip m, string text, Action onClick)
     {
-        if (shortcutsForm == null)
+        var it = new ToolStripMenuItem(text);
+        it.Click += (_, _) => onClick();
+        m.Items.Add(it);
+        return it;
+    }
+
+    void OpenFolder(string folder)
+    {
+        try
         {
-            shortcutsForm = new ShortcutsForm(this);
-            shortcutsForm.FormClosed += (_, _) => shortcutsForm = null;
-            shortcutsForm.Show();
+            Directory.CreateDirectory(folder);
+            Process.Start("explorer.exe", $"\"{folder}\"");
         }
-        Native.ForceForeground(shortcutsForm.Handle);
-        shortcutsForm.Activate();
+        catch (Exception ex)
+        {
+            tray.ShowBalloonTip(5000, "OpenSnip", "Couldn't open the folder: " + ex.Message, ToolTipIcon.Warning);
+        }
+    }
+
+    public void ShowSettings(string page = null)
+    {
+        if (settingsForm == null || settingsForm.IsDisposed)
+        {
+            settingsForm = new SettingsForm(this, page);
+            settingsForm.FormClosed += (_, _) => settingsForm = null;
+            settingsForm.Show();
+        }
+        Native.ForceForeground(settingsForm.Handle);
+        settingsForm.Activate();
     }
 
     async void RepeatLastFromMenu()
@@ -353,58 +449,9 @@ sealed class TrayApp : ApplicationContext
         RepeatLast();
     }
 
-    static ToolStripMenuItem Item(ContextMenuStrip m, string text, string keys, Action onClick)
-    {
-        var it = new ToolStripMenuItem(text) { ShortcutKeyDisplayString = keys };
-        it.Click += (_, _) => onClick();
-        m.Items.Add(it);
-        return it;
-    }
-
-    void Check(ContextMenuStrip m, string text, Func<bool> get, Action<bool> set)
-    {
-        var it = new ToolStripMenuItem(text) { Tag = get };
-        it.Click += (_, _) =>
-        {
-            set(!get());
-            Settings.Save();
-        };
-        m.Items.Add(it);
-    }
-
-    void ChangeFolder()
-    {
-        using var dlg = new FolderBrowserDialog
-        {
-            Description = "Where should OpenSnip save your snips?",
-            UseDescriptionForTitle = true,
-            InitialDirectory = Directory.Exists(Settings.SaveFolder) ? Settings.SaveFolder : "",
-        };
-        if (dlg.ShowDialog() == DialogResult.OK)
-        {
-            Settings.SaveFolder = dlg.SelectedPath;
-            Settings.Save();
-        }
-    }
-
-    static bool StartupEnabled
-    {
-        get
-        {
-            using var k = Registry.CurrentUser.OpenSubKey(RunKey);
-            return k?.GetValue("OpenSnip") is string;
-        }
-    }
-
-    static void SetStartup(bool on)
-    {
-        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (on) k.SetValue("OpenSnip", $"\"{Environment.ProcessPath}\"");
-        else k.DeleteValue("OpenSnip", false);
-    }
-
     void Exit()
     {
+        recording?.Stop();
         tray.Visible = false;
         tray.Dispose();
         Application.Exit();
