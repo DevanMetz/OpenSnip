@@ -8,7 +8,7 @@ namespace OpenSnip;
 /// </summary>
 sealed class KeyboardHook
 {
-    /// <summary>Called on the hook thread for every key event. Return true to swallow the key.</summary>
+    /// <summary>Called on the hook thread for every real (non-injected) key event. Return true to swallow the key.</summary>
     public delegate bool KeyHandler(Keys key, bool down);
 
     readonly KeyHandler handler;
@@ -39,6 +39,8 @@ sealed class KeyboardHook
         if (nCode >= 0)
         {
             var k = Marshal.PtrToStructure<Native.KBDLLHOOKSTRUCT>(lParam);
+            if ((k.flags & 0x10 /* LLKHF_INJECTED */) != 0)
+                return Native.CallNextHookEx(hook, nCode, wParam, lParam);
             int msg = (int)wParam;
             bool down = msg == Native.WM_KEYDOWN || msg == Native.WM_SYSKEYDOWN;
             try

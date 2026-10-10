@@ -71,6 +71,36 @@ static class Native
 
     public static bool KeyDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT { public uint type; public InputUnion u; }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
+
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint mapType);
+
+    /// <summary>
+    /// Taps an unassigned virtual key. After we swallow a key pressed with Win or Alt held, this stops
+    /// Windows from treating the eventual Win/Alt release as a lone tap (which would open Start or a menu bar).
+    /// </summary>
+    public static void SendMaskKey()
+    {
+        var inputs = new INPUT[2];
+        inputs[0].type = inputs[1].type = 1; // INPUT_KEYBOARD
+        inputs[0].u.ki.wVk = inputs[1].u.ki.wVk = 0xE8;
+        inputs[1].u.ki.dwFlags = 2; // KEYEVENTF_KEYUP
+        SendInput(2, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    public static char KeyChar(Keys k) => (char)(MapVirtualKey((uint)k, 2 /* MAPVK_VK_TO_CHAR */) & 0x7FFF);
+
     public static int SmallIconSize => Math.Max(16, GetSystemMetrics(49 /* SM_CXSMICON */));
 
     /// <summary>Scale factor (1.0 = 100%) of the monitor containing a screen point.</summary>

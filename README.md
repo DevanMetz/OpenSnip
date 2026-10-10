@@ -2,11 +2,12 @@
 
 A fast, no-nonsense screenshot tool for Windows. Built because the built-in Snipping Tool kept getting in the way.
 
-Press **Print Screen**, drag, done: it's on your clipboard and saved to disk. No delay, no toast notifications, no extra windows.
+Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard and saved to disk. No delay, no toast notifications, no extra windows.
 
 ## Why it's better than Snipping Tool
 
-- **Instant.** The screen freezes the moment you press PrtSc, so menus and tooltips stay put while you select.
+- **Instant.** The screen freezes the moment you press the shortcut, so menus and tooltips stay put while you select.
+- **Same muscle memory.** Win + Shift + S opens OpenSnip instead of the Snipping Tool. Prefer something else? Set any shortcut you like, which helps on keyboards without a Print Screen key.
 - **Pixel-perfect on any monitor setup.** Mixed DPIs and 4K + 1440p side by side work fine, with no blurry or offset captures.
 - **Click a window to grab just that window**, or drag any region. A magnifier with pixel coordinates and color helps you line up the edges.
 - **Copies to the clipboard as real PNG**, so pasting into Discord, Slack, browsers and docs keeps full quality.
@@ -14,7 +15,7 @@ Press **Print Screen**, drag, done: it's on your clipboard and saved to disk. No
 - **Small preview in the corner** that disappears by itself. Click it to annotate, or drag it straight into any app as a file.
 - **Annotate in one click:** arrows, boxes, pen, highlighter, text, and pixelate-to-redact. Every edit is copied to the clipboard automatically.
 - **Pin snips on top of everything**, for comparing or for keeping a reference visible while you work.
-- **Repeat the last region** with Ctrl+PrtSc, which is handy for before/after shots.
+- **Repeat the last region** with one key, which is handy for before/after shots.
 - Tiny (about 260 KB), runs in the tray, and needs no installer.
 
 ## Shortcuts
@@ -23,12 +24,13 @@ Press **Print Screen**, drag, done: it's on your clipboard and saved to disk. No
 
 | Keys | Action |
 |---|---|
+| `Win` + `Shift` + `S` | Snip |
 | `PrtSc` | Snip |
 | `Shift` + `PrtSc` | Snip after a delay (3 s by default, so you can open menus) |
 | `Ctrl` + `PrtSc` | Re-capture the last region |
 | Click the tray icon | Snip |
 
-`Alt+PrtSc` and `Win+PrtSc` still do what Windows normally does.
+To change these, right-click the tray icon and choose **Keyboard shortcuts…**, click **Change**, and press any combo. You can also give "snip after delay" and "repeat last region" their own shortcuts, or turn off the Print Screen key entirely. `Alt+PrtSc` and `Win+PrtSc` still do what Windows normally does.
 
 ### While snipping
 
@@ -72,9 +74,9 @@ Drag to move, scroll to zoom, `Ctrl` + scroll to change opacity, double-click or
 2. Optionally, build it yourself (see below).
 3. Run it. It lives in the system tray. Right-click the tray icon and tick **Start with Windows** if you want it on every boot.
 
-### Print Screen still opens the Windows Snipping Tool?
+### The Windows Snipping Tool still opens?
 
-OpenSnip intercepts the key before Windows sees it, so this normally just works. If it doesn't on your machine, turn off **Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"**.
+OpenSnip intercepts its shortcuts before Windows sees them, so this normally just works. If Print Screen still opens the Snipping Tool on your machine, turn off **Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"**. If something else grabs Win + Shift + S first, pick a different shortcut under **Keyboard shortcuts…**.
 
 ## Build from source
 
@@ -105,6 +107,7 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+ with no 
 | `src/EditorForm.cs` / `src/Shapes.cs` | Annotation editor and shapes |
 | `src/SmallWindows.cs` | Preview thumbnail, countdown, pinned images |
 | `src/KeyboardHook.cs` | Low-level keyboard hook (on its own thread) |
+| `src/Hotkeys.cs` | Shortcut parsing and the Keyboard shortcuts window |
 | `src/Imaging.cs` | Screen capture, window detection, clipboard, saving, icon |
 
 ## License

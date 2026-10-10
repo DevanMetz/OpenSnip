@@ -10,12 +10,16 @@ sealed class TrayApp : ApplicationContext
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     static volatile bool overlayOpen;
+    volatile HotkeySet hotkeys;
+    volatile Action<Hotkey> recorder;            // set while the Shortcuts window is listening for a key
+    readonly HashSet<Keys> swallowedDowns = new(); // hook thread only: keys whose release we must swallow too
 
     readonly NotifyIcon tray;
     readonly Control ui; // marshals work from background threads onto the UI thread
     CaptureOverlay overlay;
     ThumbnailForm thumb;
     CountdownForm countdown;
+    ShortcutsForm shortcutsForm;
     Rectangle? lastRegion;
     bool busy;
 
@@ -24,21 +28,22 @@ sealed class TrayApp : ApplicationContext
         Instance = this;
         ui = new Control();
         _ = ui.Handle;
+        hotkeys = HotkeySet.From(Settings);
 
         tray = new NotifyIcon
         {
             Icon = AppIcon.Get(Native.SmallIconSize),
-            Text = "OpenSnip — press PrtSc to snip",
             Visible = true,
             ContextMenuStrip = BuildMenu(),
         };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) StartSnip(0, 250); };
+        UpdateTrayText();
 
         KeyboardHook.Start(OnKey, ok => Post(() =>
         {
             if (!ok)
                 tray.ShowBalloonTip(8000, "OpenSnip",
-                    "Couldn't take over the Print Screen key. You can still snip from the tray icon.", ToolTipIcon.Warning);
+                    "Couldn't set up the keyboard shortcut. You can still snip by clicking the tray icon.", ToolTipIcon.Warning);
         }));
 
         new Thread(() => { while (snipEvent.WaitOne()) Post(() => StartSnip(0, 150)); })
@@ -48,8 +53,10 @@ sealed class TrayApp : ApplicationContext
         {
             Settings.Welcomed = true;
             Settings.Save();
+            string keys = hotkeys.SnipDisplay;
             tray.ShowBalloonTip(8000, "OpenSnip is running",
-                "Press Print Screen to snip. Right-click the tray icon for options.", ToolTipIcon.Info);
+                (keys != null ? $"Press {keys} to snip. " : "Click the tray icon to snip. ") +
+                "Right-click the tray icon to change shortcuts and options.", ToolTipIcon.Info);
         }
     }
 
@@ -58,42 +65,76 @@ sealed class TrayApp : ApplicationContext
         try { ui.BeginInvoke(a); } catch (InvalidOperationException) { }
     }
 
+    public void ReloadHotkeys()
+    {
+        hotkeys = HotkeySet.From(Settings);
+        UpdateTrayText();
+    }
+
+    void UpdateTrayText()
+    {
+        string keys = hotkeys.SnipDisplay;
+        tray.Text = keys != null ? $"OpenSnip — {keys} to snip" : "OpenSnip — click to snip";
+    }
+
+    /// <summary>Routes the next key combo pressed anywhere to <paramref name="onKey"/> (on the UI thread) instead of acting on it.</summary>
+    public void BeginRecording(Action<Hotkey> onKey) => recorder = onKey;
+    public void EndRecording() => recorder = null;
+
     // Runs on the keyboard hook thread. Must be quick; returns true to swallow the key.
     bool OnKey(Keys key, bool down)
     {
+        // Swallow the release of every press we swallowed, and nothing else.
+        if (!down) return swallowedDowns.Remove(key);
+        if (Hotkey.IsModifierKey(key)) return false;
+
+        var pressed = new Hotkey(key,
+            Native.KeyDown(Native.VK_LWIN) || Native.KeyDown(Native.VK_RWIN),
+            Native.KeyDown(Native.VK_CONTROL), Native.KeyDown(Native.VK_MENU), Native.KeyDown(Native.VK_SHIFT));
+
+        if (overlayOpen && key is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
+        {
+            Post(() => overlay?.HandleKey(key, pressed.Shift)); // auto-repeat is welcome here
+            return Swallow(pressed);
+        }
+        if (swallowedDowns.Contains(key)) return true; // auto-repeat of a key we already took
+
+        if (recorder is { } rec)
+        {
+            Post(() => rec(pressed));
+            recorder = null;
+            return Swallow(pressed);
+        }
+
+        var hk = hotkeys;
+        bool printScreen = hk.PrintScreen && key == Keys.PrintScreen && !pressed.Alt && !pressed.Win; // Alt/Win+PrtSc stay with Windows
+
         if (overlayOpen)
         {
-            switch (key)
+            if (key is Keys.Escape or Keys.Enter or Keys.F or Keys.A)
             {
-                case Keys.Escape: case Keys.Enter: case Keys.F: case Keys.A:
-                case Keys.Left: case Keys.Right: case Keys.Up: case Keys.Down:
-                    if (down)
-                    {
-                        bool shift = Native.KeyDown(Native.VK_SHIFT);
-                        Post(() => overlay?.HandleKey(key, shift));
-                    }
-                    return true;
-                case Keys.PrintScreen:
-                    return true;
+                Post(() => overlay?.HandleKey(key, pressed.Shift));
+                return Swallow(pressed);
             }
-            return false;
+            return (hk.Contains(pressed) || printScreen) && Swallow(pressed);
         }
 
-        if (key != Keys.PrintScreen) return false;
-        // Leave Alt+PrtSc and Win+PrtSc to Windows.
-        if (Native.KeyDown(Native.VK_MENU) || Native.KeyDown(Native.VK_LWIN) || Native.KeyDown(Native.VK_RWIN))
-            return false;
+        Action action = null;
+        if (pressed == hk.Snip) action = () => StartSnip();
+        else if (pressed == hk.Delay) action = () => StartSnip(Settings.DelaySeconds);
+        else if (pressed == hk.Repeat) action = RepeatLast;
+        else if (printScreen)
+            action = pressed.Ctrl ? RepeatLast : pressed.Shift ? () => StartSnip(Settings.DelaySeconds) : () => StartSnip();
+        if (action == null) return false;
 
-        if (!down)
-        {
-            bool ctrl = Native.KeyDown(Native.VK_CONTROL), shift = Native.KeyDown(Native.VK_SHIFT);
-            Post(() =>
-            {
-                if (ctrl) RepeatLast();
-                else if (shift) StartSnip(Settings.DelaySeconds);
-                else StartSnip();
-            });
-        }
+        Post(action);
+        return Swallow(pressed);
+    }
+
+    bool Swallow(Hotkey pressed)
+    {
+        swallowedDowns.Add(pressed.Key);
+        if (pressed.Win || pressed.Alt) Native.SendMaskKey();
         return true;
     }
 
@@ -246,12 +287,15 @@ sealed class TrayApp : ApplicationContext
     {
         var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = true };
 
-        Item(m, "Snip", "PrtSc", () => StartSnip(0, 250)).Font = new Font(m.Font, FontStyle.Bold);
-        var delayed = Item(m, "Snip after delay", "Shift+PrtSc", () => StartSnip(Settings.DelaySeconds, 250));
-        Item(m, "Repeat last region", "Ctrl+PrtSc", () => { RepeatLastFromMenu(); });
+        var snip = Item(m, "Snip", null, () => StartSnip(0, 250));
+        snip.Font = new Font(m.Font, FontStyle.Bold);
+        var delayed = Item(m, "Snip after delay", null, () => StartSnip(Settings.DelaySeconds, 250));
+        var repeat = Item(m, "Repeat last region", null, () => { RepeatLastFromMenu(); });
         Item(m, "Pin image from clipboard", null, PinClipboard);
         Item(m, "Open image in editor…", null, EditFile);
         m.Items.Add(new ToolStripSeparator());
+
+        Item(m, "Keyboard shortcuts…", null, ShowShortcuts);
 
         Check(m, "Auto-save snips", () => Settings.AutoSave, v => Settings.AutoSave = v);
         Item(m, "Open snips folder", null, () =>
@@ -279,12 +323,28 @@ sealed class TrayApp : ApplicationContext
 
         m.Opening += (_, _) =>
         {
+            var hk = hotkeys;
+            snip.ShortcutKeyDisplayString = hk.SnipDisplay;
+            delayed.ShortcutKeyDisplayString = hk.DelayDisplay;
+            repeat.ShortcutKeyDisplayString = hk.RepeatDisplay;
             delayed.Text = $"Snip in {Settings.DelaySeconds} second{(Settings.DelaySeconds == 1 ? "" : "s")}";
             foreach (ToolStripMenuItem it in delayMenu.DropDownItems) it.Checked = (int)it.Tag == Settings.DelaySeconds;
             foreach (var it in m.Items.OfType<ToolStripMenuItem>())
                 if (it.Tag is Func<bool> get) it.Checked = get();
         };
         return m;
+    }
+
+    void ShowShortcuts()
+    {
+        if (shortcutsForm == null)
+        {
+            shortcutsForm = new ShortcutsForm(this);
+            shortcutsForm.FormClosed += (_, _) => shortcutsForm = null;
+            shortcutsForm.Show();
+        }
+        Native.ForceForeground(shortcutsForm.Handle);
+        shortcutsForm.Activate();
     }
 
     async void RepeatLastFromMenu()

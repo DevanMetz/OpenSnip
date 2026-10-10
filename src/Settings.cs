@@ -10,6 +10,10 @@ public class Settings
     public bool ShowThumbnail { get; set; } = true;
     public bool OpenEditorAfterSnip { get; set; } = false;
     public int DelaySeconds { get; set; } = 3;
+    public string SnipHotkey { get; set; } = "Win+Shift+S";
+    public string DelayHotkey { get; set; } = "";
+    public string RepeatHotkey { get; set; } = "";
+    public bool UsePrintScreen { get; set; } = true;
     public bool Welcomed { get; set; } = false;
 
     public static string Dir =>
