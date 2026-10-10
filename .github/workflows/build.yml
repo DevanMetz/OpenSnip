@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish (needs .NET 9 Desktop Runtime)
+        run: dotnet publish src/OpenSnip.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o dist/framework
+
+      - name: Publish (standalone)
+        run: dotnet publish src/OpenSnip.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist/standalone
+
+      - name: Name artifacts
+        shell: pwsh
+        run: |
+          Copy-Item dist/framework/OpenSnip.exe dist/OpenSnip.exe
+          Copy-Item dist/standalone/OpenSnip.exe dist/OpenSnip-standalone.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSnip
+          path: |
+            dist/OpenSnip.exe
+            dist/OpenSnip-standalone.exe
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/OpenSnip.exe
+            dist/OpenSnip-standalone.exe
+          generate_release_notes: true
