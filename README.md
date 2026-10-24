@@ -1,6 +1,6 @@
 # OpenSnip
 
-A fast, no-nonsense screenshot and screen recording tool for Windows. Built because the built-in Snipping Tool kept getting in the way.
+A fast, no-nonsense screenshot and screen recording tool for Windows and Linux. Built because the built-in Snipping Tool kept getting in the way.
 
 Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard and saved to disk. Press **Win + Shift + R** to record a video of any part of the screen, with system sound (and your mic, if you turn it on). No delay, no toast notifications, no extra windows.
 
@@ -113,7 +113,65 @@ OpenSnip intercepts its shortcuts before Windows sees them, so this normally jus
 
 Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and whether the recorder can start) to `%APPDATA%\OpenSnip\diagnostics.txt`, and attach it to an [issue](https://github.com/DevanMetz/OpenSnip/issues) along with `%APPDATA%\OpenSnip\error.log` if there is one.
 
+## Linux
+
+The Linux app is a separate native Avalonia build. It covers the screenshot side of OpenSnip; recording, the annotation editor, pins and built-in global shortcuts remain Windows-only.
+
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; and settings.
+
+**Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
+
+```bash
+tar -xzf OpenSnip-linux-x64.tar.gz
+cd OpenSnip-linux-x64
+./install.sh
+```
+
+The installer copies the binary to `~/.local/bin/opensnip`, so make sure `~/.local/bin` is on your `PATH`.
+
+**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support. A tray host is optional: without one, Settings opens on launch and closing it quits OpenSnip.
+
+### Shortcuts
+
+There are no built-in global shortcuts on Linux; bind your own in GNOME Settings → Keyboard → Custom Shortcuts, or KDE System Settings → Shortcuts. Use `opensnip --snip` for a normal snip, `opensnip --snip-delay` for a delayed one, `opensnip --repeat` to re-capture the last region, and `opensnip --settings` to open settings.
+
+### Selecting a region
+
+| Input | Action |
+|---|---|
+| Drag | Select a region |
+| Click | Grab the whole monitor under the cursor |
+| `F` | Whole monitor under the cursor |
+| `A` | All monitors |
+| `Enter` | Grab what's selected |
+| Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
+| `Esc` / right-click | Cancel |
+
+### Command line
+
+```bash
+opensnip --capture file.png   # capture the whole desktop without UI
+opensnip --diagnostics [file] # print (and optionally write) a diagnostic report
+opensnip --help
+```
+
+### Build from source
+
+From the repository root:
+
+```bash
+dotnet publish linux/OpenSnip.Linux.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist/linux
+```
+
+### Where things live
+
+- Screenshots: `~/Pictures/OpenSnip` by default
+- Settings: `~/.config/OpenSnip/settings.json`
+- Crash log: `~/.config/OpenSnip/error.log`
+
 ## Build from source
+
+Linux users should see the [Linux](#linux) section above; the Linux app has its own publish command.
 
 ```bash
 git clone https://github.com/DevanMetz/OpenSnip
@@ -134,7 +192,7 @@ For a fully standalone exe that doesn't need the runtime installed (much larger)
 
 ## Contributing
 
-Issues and pull requests are welcome. The code is plain WinForms + GDI+; recording uses [ScreenRecorderLib](https://github.com/sskodje/ScreenRecorderLib).
+Issues and pull requests are welcome. The code is plain WinForms + GDI+; recording uses [ScreenRecorderLib](https://github.com/sskodje/ScreenRecorderLib). The Linux app is native Avalonia.
 
 | File | What it does |
 |---|---|
@@ -147,6 +205,10 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `src/Hotkeys.cs` | Shortcut parsing and matching |
 | `src/KeyboardHook.cs` | Low-level keyboard hook (on its own thread) |
 | `src/Imaging.cs` | Screen capture, window detection, clipboard, saving, icon |
+| `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
+| `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
+| `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
+| `linux/SettingsWindow.cs` | Linux Settings window |
 
 ## License
 
