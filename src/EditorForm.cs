@@ -263,8 +263,8 @@ sealed class EditorForm : Form
     {
         if (textBox != null) CommitText();
         copyTimer.Stop();
-        ImageOps.CopyToClipboard(composite);
-        Flash("✓ Copied");
+        bool copied = ImageOps.CopyToClipboard(composite);
+        Flash(copied ? "✓ Copied" : "Couldn't copy to clipboard", !copied);
     }
 
     void Save()
@@ -289,10 +289,10 @@ sealed class EditorForm : Form
         TrayApp.Instance.Pin(copy, loc);
     }
 
-    void Flash(string text)
+    void Flash(string text, bool warning = false)
     {
         status.Text = text;
-        status.ForeColor = Theme.Good;
+        status.ForeColor = warning ? Theme.Warn : Theme.Good;
         statusTimer.Stop();
         statusTimer.Start();
     }

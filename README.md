@@ -2,7 +2,7 @@
 
 A fast, no-nonsense screenshot and screen recording tool for Windows. Built because the built-in Snipping Tool kept getting in the way.
 
-Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard and saved to disk. Press **Win + Shift + R** to record a video of any part of the screen, with system sound and your mic. No delay, no toast notifications, no extra windows.
+Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard and saved to disk. Press **Win + Shift + R** to record a video of any part of the screen, with system sound (and your mic, if you turn it on). No delay, no toast notifications, no extra windows.
 
 ## Why it's better than Snipping Tool
 
@@ -14,9 +14,9 @@ Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard 
 - **Auto-save** to the folder of your choice as PNG or JPG, optionally sorted into monthly folders.
 - **Small preview in the corner** that disappears by itself. Click it to annotate, or drag it straight into any app as a file.
 - **Annotate in one click:** arrows, boxes, pen, highlighter, text, and pixelate-to-redact. Every edit is copied to the clipboard automatically.
-- **Pin snips on top of everything.** Resize them from any corner or edge, zoom, and fade them out.
-- **Screen recording** to MP4 (H.264, hardware accelerated) with system sound and microphone, pause, mic mute, and controls that never show up in the video.
-- **Repeat the last region** with one key, which is handy for before/after shots.
+- **Pin snips on top of everything.** Resize them from any corner or edge, zoom, and adjust their opacity.
+- **Screen recording** to MP4 (H.264, hardware accelerated) with system sound and an optional microphone, pause, mic mute, and controls that never show up in the video.
+- **Repeat the last region** with a shortcut, which is handy for before/after shots.
 - Small (about 1.5 MB), runs in the tray, and needs no installer.
 
 ## Shortcuts
@@ -32,7 +32,9 @@ Press **Win + Shift + S** (or Print Screen), drag, done: it's on your clipboard 
 | `Ctrl` + `PrtSc` | Re-capture the last region |
 | Click the tray icon | Snip (or stop recording) |
 
-Change any of these in **Settings → Shortcuts**: click **Change** and press any combo. You can also give "snip after delay" and "repeat last region" their own shortcuts, or turn off the Print Screen key entirely. `Alt+PrtSc` and `Win+PrtSc` still do what Windows normally does.
+Right-click the tray icon for the same actions, plus **Pin image from clipboard**, **Open image in editor…**, links to both folders, **Settings…** and **Exit**.
+
+Change any of the keyboard shortcuts in **Settings → Shortcuts**: click **Change** and press any combo. You can also give "snip after delay" and "repeat last region" their own shortcuts, or turn off the Print Screen key entirely. `Alt+PrtSc` and `Win+PrtSc` still do what Windows normally does.
 
 ### While selecting (snip or record)
 
@@ -75,9 +77,11 @@ Change any of these in **Settings → Shortcuts**: click **Change** and press an
 
 Press **Win + Shift + R** (or choose **Record video** from the tray menu), then pick an area, a window or a whole monitor the same way you would for a screenshot. After an optional 3-2-1 countdown, a red outline marks what's being recorded, and a small bar lets you **pause**, **mute your mic**, **stop**, or **throw the recording away**. The outline and bar are hidden from the video itself.
 
-When you stop, the MP4 is saved to `Videos\OpenSnip`, and the file is copied to the clipboard so you can paste it straight into Discord, Slack or a folder. A preview pops up that plays the video when clicked.
+A recording covers one monitor: a selection that crosses monitor edges is clipped to the monitor containing most of it.
 
-Options in **Settings → Recording**: system sound, microphone (and which one), 30 or 60 fps, quality, mouse cursor, and the countdown. The microphone is only opened when you turn it on.
+When you stop, the MP4 is saved to `Videos\OpenSnip` and copied to the clipboard by default, so you can paste it straight into Discord, Slack or a folder. A preview pops up that plays the video when clicked.
+
+Options in **Settings → Recording**: system sound, microphone (and which one), 30 or 60 fps, quality, mouse cursor, the countdown, and whether to copy the file to the clipboard. The microphone is only opened when you turn it on.
 
 ## Settings
 
@@ -94,7 +98,7 @@ Changes apply immediately.
 ## Install
 
 1. Download `OpenSnip.exe` from [Releases](https://github.com/DevanMetz/OpenSnip/releases) and put it anywhere.
-   - `OpenSnip.exe` is small but needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). If it's missing, Windows will offer to install it on first launch.
+   - `OpenSnip.exe` is small but needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0). If it's missing, the app will show a prompt to install it on first launch.
    - `OpenSnip-standalone.exe` is larger but needs nothing installed.
 2. Optionally, build it yourself (see below).
 3. Run it. It lives in the system tray. Turn on **Settings → General → Start OpenSnip when Windows starts** if you want it on every boot.
@@ -103,7 +107,7 @@ Changes apply immediately.
 
 ### The Windows Snipping Tool still opens?
 
-OpenSnip intercepts its shortcuts before Windows sees them, so this normally just works. If Print Screen still opens the Snipping Tool on your machine, turn off **Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"**. If something else grabs one of the shortcuts first, pick a different one in **Settings → Shortcuts**.
+OpenSnip intercepts its shortcuts before Windows sees them, so this normally just works. If Print Screen still opens the Snipping Tool on your machine, turn off **Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"** (on Windows 10 that's **Settings → Ease of Access → Keyboard**). If something else grabs one of the shortcuts first, pick a different one in **Settings → Shortcuts**.
 
 ### Something not working?
 

@@ -13,6 +13,7 @@ sealed class SettingsForm : Form
     readonly Panel content;
     readonly List<(Button btn, TableLayoutPanel page)> pages = new();
     readonly List<HotkeyRow> hotkeyRows = new();
+    readonly Font navFont, navFontBold;
     HotkeyRow listening;
     Label shortcutNote;
 
@@ -37,6 +38,8 @@ sealed class SettingsForm : Form
         BackColor = Theme.Back;
         ForeColor = Theme.Text;
         Font = new Font("Segoe UI", 13f * ui, GraphicsUnit.Pixel);
+        navFont = new Font(Font, FontStyle.Regular);
+        navFontBold = new Font(Font, FontStyle.Bold);
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -149,8 +152,6 @@ sealed class SettingsForm : Form
         Full(p, Check("Show the mouse cursor", () => s.RecordCursor, v => s.RecordCursor = v));
         Full(p, Check("Count down 3, 2, 1 before recording starts", () => s.RecordCountdown, v => s.RecordCountdown = v));
         Full(p, Check("Copy the video file to the clipboard when done", () => s.CopyRecordingToClipboard, v => s.CopyRecordingToClipboard = v));
-        Full(p, Note("Paste the copied video straight into Discord, Slack or a folder. " +
-                     "The recording controls are hidden from the video itself."));
         return p;
     }
 
@@ -161,11 +162,10 @@ sealed class SettingsForm : Form
         HotkeyRowFor(p, "Snip after delay", () => s.DelayHotkey, v => s.DelayHotkey = v);
         HotkeyRowFor(p, "Repeat last region", () => s.RepeatHotkey, v => s.RepeatHotkey = v);
         HotkeyRowFor(p, "Start / stop recording", () => s.RecordHotkey, v => s.RecordHotkey = v);
-        var prt = Check("Also use the Print Screen key  (Shift = delay, Ctrl = repeat)", () => s.UsePrintScreen, v => s.UsePrintScreen = v);
+        var prt = Check("Also use the Print Screen key", () => s.UsePrintScreen, v => s.UsePrintScreen = v);
         prt.Margin = Pad(0, 14, 0, 4);
         Full(p, prt);
-        shortcutNote = Note("Click Change, then press the keys you want. OpenSnip catches shortcuts before Windows does, " +
-                            "so Win + Shift + S and Win + Shift + R open OpenSnip instead of the Snipping Tool.");
+        shortcutNote = Note("");
         Full(p, shortcutNote);
         return p;
     }
@@ -203,7 +203,6 @@ sealed class SettingsForm : Form
         link.LinkArea = new LinkArea(link.Text.IndexOf("github", StringComparison.Ordinal), "github.com/DevanMetz/OpenSnip".Length);
         link.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo("https://github.com/DevanMetz/OpenSnip") { UseShellExecute = true });
         Full(p, link);
-        Full(p, Note("Free and open source under the MIT license. Screen recording uses ScreenRecorderLib (MIT)."));
         return p;
     }
 
@@ -257,7 +256,7 @@ sealed class SettingsForm : Form
             page.Visible = on;
             btn.BackColor = on ? NavSelected : Theme.Panel;
             btn.FlatAppearance.MouseOverBackColor = on ? NavSelected : Color.FromArgb(58, 58, 68);
-            btn.Font = new Font(Font, on ? FontStyle.Bold : FontStyle.Regular);
+            btn.Font = on ? navFontBold : navFont;
         }
     }
 
@@ -494,7 +493,7 @@ sealed class SettingsForm : Form
         if (h.Key == Keys.Escape && !h.HasModifier) { StopListening(); return; }
         if (!h.HasModifier && !Hotkey.OkWithoutModifier(h.Key))
         {
-            shortcutNote.ForeColor = Color.FromArgb(255, 170, 90);
+            shortcutNote.ForeColor = Theme.Warn;
             shortcutNote.Text = $"\"{h.Display}\" alone would stop that key from typing. Add Ctrl, Alt, Shift or Win.";
             app.BeginRecording(OnKeyPressed); // keep listening
             return;
@@ -529,6 +528,16 @@ sealed class SettingsForm : Form
     {
         StopListening();
         base.OnFormClosed(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing)
+        {
+            navFont?.Dispose();
+            navFontBold?.Dispose();
+        }
     }
 }
 

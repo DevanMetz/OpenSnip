@@ -71,15 +71,23 @@ static class ImageOps
         return ms.ToArray();
     }
 
-    /// <summary>Puts the image on the clipboard as both a bitmap and a lossless PNG.</summary>
-    public static void CopyToClipboard(Bitmap b, byte[] png = null)
+    /// <summary>Puts the image on the clipboard as both a bitmap and a lossless PNG. Returns false if the clipboard was busy.</summary>
+    public static bool CopyToClipboard(Bitmap b, byte[] png = null)
     {
         png ??= Png(b);
-        var data = new DataObject();
-        data.SetData(DataFormats.Bitmap, true, b);
-        data.SetData("PNG", false, new MemoryStream(png));
-        try { Clipboard.SetDataObject(data, true, 10, 50); }
-        catch (Exception ex) { Log.Error(ex); }
+        try
+        {
+            var data = new DataObject();
+            data.SetData(DataFormats.Bitmap, true, b);
+            data.SetData("PNG", false, new MemoryStream(png));
+            Clipboard.SetDataObject(data, true, 10, 50);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            return false;
+        }
     }
 
     public static string NewFileName() => $"Snip {DateTime.Now:yyyy-MM-dd HH.mm.ss}";
@@ -192,6 +200,7 @@ static class Theme
     public static readonly Color Muted = Color.FromArgb(150, 150, 160);
     public static readonly Color Good = Color.FromArgb(120, 220, 140);
     public static readonly Color Record = Color.FromArgb(240, 68, 56);
+    public static readonly Color Warn = Color.FromArgb(255, 170, 90);
 }
 
 static class AppIcon
