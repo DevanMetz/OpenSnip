@@ -112,7 +112,7 @@ sealed class ThumbnailForm : Popup
     readonly Font font;
     readonly Rectangle imgRect;
     int lifeMs;
-    bool hovering, pressed;
+    bool hovering, pressed, dragging;
     Point pressAt;
 
     /// <param name="video">True when <paramref name="path"/> is a recording; <paramref name="img"/> is then just a still of it.</param>
@@ -148,7 +148,7 @@ sealed class ThumbnailForm : Popup
 
     void Tick(object sender, EventArgs e)
     {
-        if (hovering || pressed) { lifeMs = 0; Opacity = 1; return; }
+        if (hovering || pressed || dragging) { lifeMs = 0; Opacity = 1; return; }
         lifeMs += timer.Interval;
         if (lifeMs < lifetimeMs) return;
         Opacity -= 0.08;
@@ -170,6 +170,8 @@ sealed class ThumbnailForm : Popup
         var d = SystemInformation.DragSize;
         if (Math.Abs(e.X - pressAt.X) <= d.Width && Math.Abs(e.Y - pressAt.Y) <= d.Height) return;
         pressed = false;
+        dragging = true;
+        lifeMs = 0;
         try
         {
             var data = video ? ImageOps.FileData(path) : ImageOps.DragData(img, path);
@@ -177,6 +179,7 @@ sealed class ThumbnailForm : Popup
             if (result != DragDropEffects.None) Close();
         }
         catch (Exception ex) { Log.Error(ex); }
+        finally { dragging = false; }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)

@@ -78,9 +78,11 @@ sealed class TrayApp : ApplicationContext
     void UpdateTrayText()
     {
         string keys = hotkeys.SnipDisplay;
-        tray.Text = recording != null ? "OpenSnip — recording (click to stop)"
-                  : keys != null ? $"OpenSnip — {keys} to snip"
-                  : "OpenSnip — click to snip";
+        string text = recording != null ? "OpenSnip — recording (click to stop)"
+                    : keys != null ? $"OpenSnip — {keys} to snip"
+                    : "OpenSnip — click to snip";
+        // NotifyIcon.Text is limited to 63 characters, and a long key name can exceed that.
+        tray.Text = text.Length <= 63 ? text : text[..62] + "…";
     }
 
     /// <summary>Routes the next key combo pressed anywhere to <paramref name="onKey"/> (on the UI thread) instead of acting on it.</summary>
@@ -213,10 +215,11 @@ sealed class TrayApp : ApplicationContext
     {
         lastRegion = screenRect;
         byte[] png = null;
+        bool copied = false;
         if (Settings.CopyToClipboard)
         {
             png = ImageOps.Png(bmp);
-            ImageOps.CopyToClipboard(bmp, png);
+            copied = ImageOps.CopyToClipboard(bmp, png);
         }
 
         string path = null;
@@ -231,10 +234,10 @@ sealed class TrayApp : ApplicationContext
         }
 
         // If nothing was copied or saved, always show the preview so the snip isn't lost.
-        bool nowhere = !Settings.CopyToClipboard && path == null;
+        bool nowhere = !copied && path == null;
         if (Settings.OpenEditorAfterSnip) OpenEditor(bmp, screenRect);
         else if (Settings.ShowThumbnail || nowhere)
-            ShowThumb(new ThumbnailForm(bmp, path, screenRect, Settings.CopyToClipboard, Settings.PreviewSeconds));
+            ShowThumb(new ThumbnailForm(bmp, path, screenRect, copied, Settings.PreviewSeconds));
         else bmp.Dispose();
     }
 
@@ -264,15 +267,28 @@ sealed class TrayApp : ApplicationContext
 
     void PinClipboard()
     {
-        if (Clipboard.GetImage() is Bitmap b)
+        Bitmap bmp = null;
+        try
         {
-            var bmp = new Bitmap(b.Width, b.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (var g = Graphics.FromImage(bmp)) ImageOps.Blit(g, b, 0, 0);
-            b.Dispose();
-            var p = Cursor.Position;
-            Pin(bmp, new Point(p.X - bmp.Width / 2, p.Y - bmp.Height / 2));
+            using var src = Clipboard.GetImage();
+            if (src == null)
+            {
+                tray.ShowBalloonTip(3000, "OpenSnip", "There's no image on the clipboard.", ToolTipIcon.Info);
+                return;
+            }
+            bmp = new Bitmap(src.Width, src.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            bmp.SetResolution(96, 96);
+            using (var g = Graphics.FromImage(bmp)) ImageOps.Blit(g, src, 0, 0);
         }
-        else tray.ShowBalloonTip(3000, "OpenSnip", "There's no image on the clipboard.", ToolTipIcon.Info);
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            bmp?.Dispose();
+            tray.ShowBalloonTip(5000, "OpenSnip", "Couldn't read the image on the clipboard.", ToolTipIcon.Warning);
+            return;
+        }
+        var p = Cursor.Position;
+        Pin(bmp, new Point(p.X - bmp.Width / 2, p.Y - bmp.Height / 2));
     }
 
     void EditFile()
@@ -365,13 +381,18 @@ sealed class TrayApp : ApplicationContext
 
     void OnRecordingSaved(string path, Bitmap still, Rectangle area)
     {
+        bool copied = false;
         if (Settings.CopyRecordingToClipboard)
         {
-            try { Clipboard.SetDataObject(ImageOps.FileData(path), true, 10, 50); }
+            try
+            {
+                Clipboard.SetDataObject(ImageOps.FileData(path), true, 10, 50);
+                copied = true;
+            }
             catch (Exception ex) { Log.Error(ex); }
         }
         still ??= new Bitmap(Math.Max(1, area.Width), Math.Max(1, area.Height));
-        ShowThumb(new ThumbnailForm(still, path, area, Settings.CopyRecordingToClipboard,
+        ShowThumb(new ThumbnailForm(still, path, area, copied,
             Math.Max(Settings.PreviewSeconds, 8), video: true));
     }
 

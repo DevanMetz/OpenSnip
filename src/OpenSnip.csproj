@@ -11,7 +11,7 @@
     <AssemblyName>OpenSnip</AssemblyName>
     <RootNamespace>OpenSnip</RootNamespace>
     <ApplicationIcon Condition="Exists('app.ico')">app.ico</ApplicationIcon>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Product>OpenSnip</Product>
     <Description>A fast, no-nonsense screenshot and screen recording tool for Windows.</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
