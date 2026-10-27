@@ -8,6 +8,7 @@ namespace OpenSnip;
 sealed class App : Application
 {
     public static LaunchAction StartupAction { get; set; }
+    public static string StartupArgument { get; set; }
     public static App Instance { get; private set; }
 
     public Settings Settings { get; }
@@ -17,9 +18,12 @@ sealed class App : Application
     NativeMenuItem _delayItem;
     SettingsWindow _settingsWindow;
     ThumbnailWindow _thumbnail;
+    readonly List<PinWindow> _pins = new();
     PixelRect? _lastRegion;
     bool _trayAvailable;
     bool _busy;
+    bool _started;
+    int _pinJobs;
 
     public App()
     {
@@ -39,7 +43,7 @@ sealed class App : Application
         {
             _desktop = desktop;
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            SingleInstance.SetHandler(action => Dispatcher.UIThread.Post(() => HandleAction(action)));
+            SingleInstance.SetHandler(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
             _ = StartAsync();
         }
         base.OnFrameworkInitializationCompleted();
@@ -76,10 +80,14 @@ sealed class App : Application
             }
         }
 
-        if (!_trayAvailable) ShowSettings();
-
         var action = StartupAction;
+        var argument = StartupArgument;
         StartupAction = LaunchAction.None;
+        StartupArgument = null;
+        // A pin is the window for this launch. Settings is only the home window
+        // when nothing else is on screen, because closing it quits a tray-less app.
+        if (!_trayAvailable && action != LaunchAction.Pin) ShowSettings();
+
         switch (action)
         {
             case LaunchAction.Snip:
@@ -94,7 +102,13 @@ sealed class App : Application
             case LaunchAction.Settings:
                 ShowSettings();
                 break;
+            case LaunchAction.Pin:
+                _ = PinAsync(argument);
+                break;
         }
+
+        _started = true;
+        QuitIfIdle();
     }
 
     void CreateTray()
@@ -105,6 +119,7 @@ sealed class App : Application
         menu.Add(_delayItem);
         menu.Add(Item("Repeat last region", RepeatLast));
         menu.Add(new NativeMenuItemSeparator());
+        menu.Add(Item("Pin image from clipboard", () => _ = PinAsync(null)));
         menu.Add(Item("Open screenshots folder", OpenScreenshotsFolder));
         menu.Add(Item("Settings…", () => ShowSettings()));
         menu.Add(new NativeMenuItemSeparator());
@@ -128,14 +143,15 @@ sealed class App : Application
         return item;
     }
 
-    void HandleAction(LaunchAction action)
+    void HandleCommand(RemoteCommand command)
     {
-        switch (action)
+        switch (command.Action)
         {
             case LaunchAction.Snip: StartSnip(); break;
             case LaunchAction.SnipDelay: StartSnip(Settings.DelaySeconds); break;
             case LaunchAction.Repeat: RepeatLast(); break;
             case LaunchAction.Settings: ShowSettings(); break;
+            case LaunchAction.Pin: _ = PinAsync(command.Argument); break;
         }
     }
 
@@ -147,7 +163,95 @@ sealed class App : Application
     public void SettingsWindowClosed(SettingsWindow window)
     {
         if (ReferenceEquals(_settingsWindow, window)) _settingsWindow = null;
-        if (!_trayAvailable) Dispatcher.UIThread.Post(ExitApp);
+        QuitIfIdle();
+    }
+
+    public async Task PinAsync(string path)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => _ = PinAsync(path));
+            return;
+        }
+
+        _pinJobs++;
+        try
+        {
+            CapturedFrame image;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                image = CapturedFrame.DecodeFile(path);
+            }
+            else
+            {
+                image = await ClipboardService.ReadImageAsync(_settingsWindow);
+                if (image == null)
+                {
+                    await ShowErrorAsync("There's no image on the clipboard.");
+                    return;
+                }
+            }
+            ShowPin(image);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            string message = string.IsNullOrWhiteSpace(path)
+                ? "Could not open the image."
+                : "Could not open that image: " + ex.Message;
+            try { await ShowErrorAsync(message); } catch (Exception dialog) { Log.Error(dialog); }
+        }
+        finally
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                _pinJobs--;
+                QuitIfIdle();
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _pinJobs--;
+                    QuitIfIdle();
+                });
+            }
+        }
+    }
+
+    void ShowPin(CapturedFrame frame)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ShowPin(frame));
+            return;
+        }
+
+        PixelPoint? at = null;
+        if (!PlatformInfo.IsWayland)
+        {
+            var pointer = X11Pointer.TryGet();
+            if (pointer is { } point) at = new PixelPoint(point.X, point.Y);
+        }
+
+        var pin = new PinWindow(frame, Settings, at);
+        var closed = false;
+        pin.Closed += (_, _) =>
+        {
+            closed = true;
+            _pins.Remove(pin);
+            QuitIfIdle();
+        };
+        pin.Show();
+        if (closed) return;
+        _pins.Add(pin);
+        pin.Activate();
+    }
+
+    void QuitIfIdle()
+    {
+        if (!_started || _trayAvailable || _settingsWindow != null || _pins.Count > 0 || _pinJobs > 0) return;
+        Dispatcher.UIThread.Post(ExitApp);
     }
 
     public void ShowSettings(string page = "Capture")
