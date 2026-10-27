@@ -65,6 +65,21 @@ sealed class CapturedFrame
     public static CapturedFrame DecodeFile(string path)
     {
         using var source = SKBitmap.Decode(path) ?? throw new InvalidOperationException("Could not decode the captured image");
+        return FromBitmap(source);
+    }
+
+    public static CapturedFrame DecodeBytes(byte[] data)
+    {
+        if (data == null || data.Length == 0) throw new InvalidOperationException("Could not decode the captured image");
+        SKBitmap source;
+        try { source = SKBitmap.Decode(data); }
+        catch (Exception ex) { throw new InvalidOperationException("Could not decode the captured image", ex); }
+        if (source == null) throw new InvalidOperationException("Could not decode the captured image");
+        using (source) return FromBitmap(source);
+    }
+
+    static CapturedFrame FromBitmap(SKBitmap source)
+    {
         if (source.Width <= 0 || source.Height <= 0) throw new InvalidOperationException("The captured image is empty");
         using var converted = new SKBitmap(new SKImageInfo(source.Width, source.Height, SKColorType.Bgra8888, SKAlphaType.Opaque));
         using (var canvas = new SKCanvas(converted))
