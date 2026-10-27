@@ -2,29 +2,174 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 namespace OpenSnip;
 
-sealed class OverlayWindow : Window
+static class OverlayWindow
 {
-    readonly TaskCompletionSource<PixelRect?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly PixelRect _virtualBounds;
-    readonly CaptureCanvas _canvas;
-
-    public OverlayWindow(CapturedFrame frame, Settings settings)
+    public static Task<PixelRect?> SelectAsync(CapturedFrame frame, Settings settings)
     {
-        var screens = Screens.All;
-        PixelRect union = screens.Count > 0 ? screens[0].Bounds : new PixelRect(0, 0, frame.Width, frame.Height);
-        foreach (var screen in screens) union = union.Union(screen.Bounds);
-        _virtualBounds = union;
+        var session = new OverlaySession(frame, settings);
+        return session.Run();
+    }
+}
 
-        var scale = Screens.ScreenFromPoint(union.Position)?.Scaling
-                    ?? Screens.Primary?.Scaling
-                    ?? 1;
+sealed class OverlaySession
+{
+    readonly Settings _settings;
+    readonly MonitorMap _map;
+    readonly SnipSession _snip;
+    readonly X11Pointer _pointer;
+    readonly WriteableBitmap _bitmap;
+    readonly List<MonitorOverlayWindow> _windows = new();
+    readonly TaskCompletionSource<PixelRect?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    bool _done;
 
+    public OverlaySession(CapturedFrame frame, Settings settings)
+    {
+        _settings = settings;
+        _pointer = X11Pointer.TryOpen();
+        _map = MonitorMap.Create(ReadLayouts(frame), frame.Width, frame.Height, frame.OriginKnown, frame.OriginX, frame.OriginY);
+        _snip = new SnipSession(_map);
+        _bitmap = frame.ToBitmap();
+    }
+
+    public MonitorMap Map => _map;
+    public SnipSession Snip => _snip;
+    public Settings Settings => _settings;
+    public WriteableBitmap Bitmap => _bitmap;
+
+    public Task<PixelRect?> Run()
+    {
+        for (int i = 0; i < _map.Monitors.Count; i++)
+            _windows.Add(new MonitorOverlayWindow(this, i));
+
+        int focus = 0;
+        for (int i = 0; i < _map.Monitors.Count; i++)
+        {
+            if (_map.Monitors[i].Primary) focus = i;
+        }
+
+        for (int i = 0; i < _windows.Count; i++)
+        {
+            _windows[i].ShowActivated = i == focus;
+            _windows[i].Show();
+        }
+        _windows[focus].Activate();
+        _windows[focus].FocusCanvas();
+        return _result.Task;
+    }
+
+    public PixelPoint PointerDesktop(int index, Point local, Size size)
+    {
+        bool inside = local.X >= 0 && local.Y >= 0 && local.X < size.Width && local.Y < size.Height;
+        if (!inside && _pointer != null)
+        {
+            var root = _pointer.Position();
+            if (root is { } point) return point;
+        }
+        return _map.DesktopPoint(index, local.X, local.Y, size.Width, size.Height);
+    }
+
+    public void Apply(SnipOutcome outcome)
+    {
+        if (_done) return;
+        if (!outcome.Close)
+        {
+            Invalidate();
+            return;
+        }
+        if (outcome.Cancel || !outcome.HasRegion || !_map.TryToImage(outcome.Region, out var image))
+            Finish(null);
+        else
+            Finish(image);
+    }
+
+    public void WindowClosed() => Finish(null);
+
+    void Invalidate()
+    {
+        foreach (var window in _windows) window.InvalidateCanvas();
+    }
+
+    void Finish(PixelRect? image)
+    {
+        if (_done) return;
+        _done = true;
+        _result.TrySetResult(image);
+        foreach (var window in _windows.ToArray())
+        {
+            try { window.Close(); } catch { }
+        }
+        _pointer?.Dispose();
+        var bitmap = _bitmap;
+        Dispatcher.UIThread.Post(() =>
+        {
+            try { bitmap.Dispose(); } catch { }
+        }, DispatcherPriority.Background);
+    }
+
+    static List<MonitorLayout> ReadLayouts(CapturedFrame frame)
+    {
+        var layouts = new List<MonitorLayout>();
+        Window probe = null;
+        try
+        {
+            probe = new Window
+            {
+                SystemDecorations = SystemDecorations.None,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                Width = 1,
+                Height = 1,
+                Opacity = 0,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+            };
+            var screens = probe.Screens?.All;
+            if (screens != null)
+            {
+                foreach (var screen in screens)
+                {
+                    if (screen == null || screen.Bounds.Width <= 0 || screen.Bounds.Height <= 0) continue;
+                    layouts.Add(new MonitorLayout(screen.Bounds, screen.Scaling, screen.IsPrimary));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+        finally
+        {
+            try { probe?.Close(); } catch { }
+        }
+
+        if (layouts.Count == 0)
+        {
+            layouts.Add(new MonitorLayout(
+                new PixelRect(0, 0, Math.Max(1, frame.Width), Math.Max(1, frame.Height)),
+                1,
+                true));
+        }
+        return layouts;
+    }
+}
+
+sealed class MonitorOverlayWindow : Window
+{
+    readonly OverlaySession _session;
+    readonly MonitorLayout _layout;
+    readonly CaptureCanvas _canvas;
+    bool _fitting;
+
+    public MonitorOverlayWindow(OverlaySession session, int index)
+    {
+        _session = session;
+        _layout = session.Map.Monitors[index];
         Title = "OpenSnip";
         Icon = IconLoader.Icon;
         SystemDecorations = SystemDecorations.None;
@@ -34,185 +179,126 @@ sealed class OverlayWindow : Window
         WindowStartupLocation = WindowStartupLocation.Manual;
         Background = Brushes.Black;
         Cursor = new Cursor(StandardCursorType.Cross);
-        Position = union.Position;
-        Width = Math.Max(1, union.Width / scale);
-        Height = Math.Max(1, union.Height / scale);
+        UseLayoutRounding = false;
+        Position = new PixelPoint(_layout.Bounds.X, _layout.Bounds.Y);
+        Width = Math.Max(1, _layout.Bounds.Width / _layout.ScaleOrOne);
+        Height = Math.Max(1, _layout.Bounds.Height / _layout.ScaleOrOne);
 
-        _canvas = new CaptureCanvas(frame, settings, union, Complete);
+        _canvas = new CaptureCanvas(session, index);
         Content = _canvas;
-        Closed += (_, _) => _result.TrySetResult(null);
+        Opened += (_, _) => Fit();
+        ScalingChanged += (_, _) => Fit();
+        Closed += (_, _) => session.WindowClosed();
+        AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
     }
 
-    public Task<PixelRect?> SelectAsync()
+    public void FocusCanvas()
     {
-        Show();
-        Activate();
         Focus();
         _canvas.Focus();
-        return _result.Task;
     }
 
-    protected override void OnOpened(EventArgs e)
-    {
-        base.OnOpened(e);
-        _canvas.Focus();
-    }
+    public void InvalidateCanvas() => _canvas.InvalidateVisual();
 
-    protected override void OnKeyDown(KeyEventArgs e)
+    void OnKey(object sender, KeyEventArgs e)
     {
-        if (_canvas.HandleKey(e))
+        SnipCommand? command = e.Key switch
         {
-            e.Handled = true;
-            return;
-        }
-        base.OnKeyDown(e);
+            Key.Escape => SnipCommand.Escape,
+            Key.Enter => SnipCommand.Enter,
+            Key.F => SnipCommand.Monitor,
+            Key.A => SnipCommand.All,
+            Key.Left => SnipCommand.Left,
+            Key.Right => SnipCommand.Right,
+            Key.Up => SnipCommand.Up,
+            Key.Down => SnipCommand.Down,
+            _ => null,
+        };
+        if (command == null) return;
+        _session.Apply(_session.Snip.Command(command.Value, e.KeyModifiers.HasFlag(KeyModifiers.Shift)));
+        e.Handled = true;
     }
 
-    void Complete(PixelRect? selection)
+    void Fit()
     {
-        if (_result.TrySetResult(selection)) Close();
+        if (_fitting) return;
+        _fitting = true;
+        try
+        {
+            double scale = RenderScaling;
+            if (scale < 0.01 || double.IsNaN(scale) || double.IsInfinity(scale))
+                scale = _layout.ScaleOrOne;
+            double width = Math.Max(1, _layout.Bounds.Width / scale);
+            double height = Math.Max(1, _layout.Bounds.Height / scale);
+            if (double.IsNaN(Width) || Math.Abs(Width - width) > 0.5) Width = width;
+            if (double.IsNaN(Height) || Math.Abs(Height - height) > 0.5) Height = height;
+            var position = new PixelPoint(_layout.Bounds.X, _layout.Bounds.Y);
+            if (Position != position) Position = position;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+        finally
+        {
+            _fitting = false;
+        }
     }
 }
 
 sealed class CaptureCanvas : Control
 {
-    readonly CapturedFrame _frame;
-    readonly Bitmap _bitmap;
-    readonly Settings _settings;
-    readonly PixelRect _virtualBounds;
-    readonly Action<PixelRect?> _complete;
+    readonly OverlaySession _session;
+    readonly int _index;
     readonly Typeface _typeface = new("Inter");
-
-    bool _dragging;
-    bool _hasPointer;
-    bool _keyboardCursor;
-    Point _start;
-    Point _end;
-    Point _cursor;
-    Rect? _selection;
 
     static readonly IBrush DimBrush = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
     static readonly IBrush ReadoutBrush = new SolidColorBrush(Color.FromArgb(238, 38, 38, 44));
     static readonly IPen AccentPen = new Pen(AppTheme.Accent, 2);
     static readonly IPen CrosshairPen = new Pen(AppTheme.Accent, 1);
 
-    public CaptureCanvas(CapturedFrame frame, Settings settings, PixelRect virtualBounds, Action<PixelRect?> complete)
+    public CaptureCanvas(OverlaySession session, int index)
     {
-        _frame = frame;
-        _bitmap = frame.ToBitmap();
-        _settings = settings;
-        _virtualBounds = virtualBounds;
-        _complete = complete;
+        _session = session;
+        _index = index;
         Focusable = true;
         ClipToBounds = true;
-    }
-
-    public bool HandleKey(KeyEventArgs e)
-    {
-        switch (e.Key)
-        {
-            case Key.Escape:
-                _complete(null);
-                return true;
-            case Key.Enter:
-                if (_selection is { } current) _complete(ToImageRect(current));
-                else _complete(MonitorAt(CurrentCursor()));
-                return true;
-            case Key.A:
-                _selection = new Rect(0, 0, Bounds.Width, Bounds.Height);
-                _keyboardCursor = false;
-                InvalidateVisual();
-                return true;
-            case Key.F:
-                _selection = MonitorRect(CurrentCursor());
-                _keyboardCursor = false;
-                InvalidateVisual();
-                return true;
-            case Key.Left:
-            case Key.Right:
-            case Key.Up:
-            case Key.Down:
-                Nudge(e.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-                return true;
-        }
-        return false;
-    }
-
-    void Nudge(Key key, bool large)
-    {
-        double step = large ? 10 : 1;
-        var delta = key switch
-        {
-            Key.Left => new Vector(-step, 0),
-            Key.Right => new Vector(step, 0),
-            Key.Up => new Vector(0, -step),
-            _ => new Vector(0, step),
-        };
-        if (!_hasPointer)
-        {
-            _cursor = new Point(Bounds.Width / 2, Bounds.Height / 2);
-            _hasPointer = true;
-        }
-        _cursor = ClampPoint(_cursor + delta);
-        if (_selection is { } current)
-            _selection = ClampRect(current.Translate(delta));
-        _keyboardCursor = true;
-        InvalidateVisual();
+        Cursor = new Cursor(StandardCursorType.Cross);
+        RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.None);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
         Focus();
-        var point = e.GetPosition(this);
-        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
+        var point = e.GetCurrentPoint(this);
+        if (point.Properties.IsRightButtonPressed)
         {
-            _complete(null);
+            _session.Apply(SnipOutcome.Cancelled());
             e.Handled = true;
             return;
         }
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-
-        _dragging = true;
-        _start = _end = _cursor = ClampPoint(point);
-        _hasPointer = true;
-        _keyboardCursor = false;
-        _selection = null;
-        e.Pointer.Capture(this);
-        InvalidateVisual();
+        if (!point.Properties.IsLeftButtonPressed) return;
+        _session.Snip.Press(_session.PointerDesktop(_index, e.GetPosition(this), Bounds.Size));
+        _session.Apply(SnipOutcome.Continue());
         e.Handled = true;
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        var point = ClampPoint(e.GetPosition(this));
-        _cursor = point;
-        _hasPointer = true;
-        if (_dragging)
-        {
-            _end = point;
-            var rect = RectFromPoints(_start, _end);
-            _selection = rect.Width >= 1 && rect.Height >= 1 ? rect : null;
-        }
-        InvalidateVisual();
+        _session.Snip.Move(_session.PointerDesktop(_index, e.GetPosition(this), Bounds.Size));
+        _session.Apply(SnipOutcome.Continue());
+        e.Handled = true;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (!_dragging) return;
-        _dragging = false;
-        e.Pointer.Capture(null);
-        var point = ClampPoint(e.GetPosition(this));
-        _cursor = point;
-        var rect = RectFromPoints(_start, point);
-        if (rect.Width < 3 && rect.Height < 3)
-        {
-            _complete(MonitorAt(point));
-            return;
-        }
-        _complete(ToImageRect(rect));
+        if (!_session.Snip.Dragging) return;
+        var outcome = _session.Snip.Release(_session.PointerDesktop(_index, e.GetPosition(this), Bounds.Size));
+        _session.Apply(outcome);
+        e.Handled = true;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -221,210 +307,162 @@ sealed class CaptureCanvas : Control
         e.Handled = true;
     }
 
-    Rect RectFromPoints(Point a, Point b)
-    {
-        double left = Math.Clamp(Math.Min(a.X, b.X), 0, Math.Max(0, Bounds.Width));
-        double top = Math.Clamp(Math.Min(a.Y, b.Y), 0, Math.Max(0, Bounds.Height));
-        double right = Math.Clamp(Math.Max(a.X, b.X), 0, Math.Max(0, Bounds.Width));
-        double bottom = Math.Clamp(Math.Max(a.Y, b.Y), 0, Math.Max(0, Bounds.Height));
-        return new Rect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
-    }
-
-    Point ClampPoint(Point point) =>
-        new(Math.Clamp(point.X, 0, Math.Max(0, Bounds.Width)), Math.Clamp(point.Y, 0, Math.Max(0, Bounds.Height)));
-
-    Rect ClampRect(Rect rect)
-    {
-        double x = Math.Clamp(rect.X, 0, Math.Max(0, Bounds.Width - rect.Width));
-        double y = Math.Clamp(rect.Y, 0, Math.Max(0, Bounds.Height - rect.Height));
-        return new Rect(x, y, rect.Width, rect.Height);
-    }
-
-    Point CurrentCursor()
-    {
-        if (_hasPointer) return _cursor;
-        return new Point(Bounds.Width / 2, Bounds.Height / 2);
-    }
-
-    Rect MonitorRect(Point local)
-    {
-        var screens = TopLevel.GetTopLevel(this)?.Screens;
-        if (screens == null) return new Rect(0, 0, Bounds.Width, Bounds.Height);
-        double physicalX = _virtualBounds.X + local.X * _virtualBounds.Width / Math.Max(1, Bounds.Width);
-        double physicalY = _virtualBounds.Y + local.Y * _virtualBounds.Height / Math.Max(1, Bounds.Height);
-        var screen = screens.ScreenFromPoint(new PixelPoint((int)physicalX, (int)physicalY))
-                     ?? screens.Primary;
-        if (screen == null) return new Rect(0, 0, Bounds.Width, Bounds.Height);
-        double sx = Bounds.Width / Math.Max(1, _virtualBounds.Width);
-        double sy = Bounds.Height / Math.Max(1, _virtualBounds.Height);
-        return new Rect(
-            (screen.Bounds.X - _virtualBounds.X) * sx,
-            (screen.Bounds.Y - _virtualBounds.Y) * sy,
-            screen.Bounds.Width * sx,
-            screen.Bounds.Height * sy);
-    }
-
-    PixelRect MonitorAt(Point local)
-    {
-        var rect = MonitorRect(local);
-        return ToImageRect(rect);
-    }
-
-    PixelRect ToImageRect(Rect local)
-    {
-        double sx = _frame.Width / Math.Max(1, Bounds.Width);
-        double sy = _frame.Height / Math.Max(1, Bounds.Height);
-        int x = (int)Math.Round(local.X * sx);
-        int y = (int)Math.Round(local.Y * sy);
-        int width = (int)Math.Round(local.Width * sx);
-        int height = (int)Math.Round(local.Height * sy);
-        x = Math.Clamp(x, 0, _frame.Width - 1);
-        y = Math.Clamp(y, 0, _frame.Height - 1);
-        width = Math.Clamp(width, 1, _frame.Width - x);
-        height = Math.Clamp(height, 1, _frame.Height - y);
-        return new PixelRect(x, y, width, height);
-    }
-
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        var bounds = new Rect(0, 0, Bounds.Width, Bounds.Height);
-        context.DrawImage(_bitmap, bounds);
+        var view = new Rect(0, 0, Bounds.Width, Bounds.Height);
+        if (view.Width <= 0 || view.Height <= 0) return;
 
-        Rect? readout = null;
-        if (_selection is { } selection)
+        context.FillRectangle(Brushes.Black, view);
+        var map = _session.Map;
+        if (map.TryPlacement(_index, view.Width, view.Height, out var source, out var dest) && _session.Bitmap != null)
         {
-            var top = new Rect(0, 0, Bounds.Width, Math.Max(0, selection.Y));
-            var bottom = new Rect(0, Math.Max(0, selection.Bottom), Bounds.Width, Math.Max(0, Bounds.Height - selection.Bottom));
-            var left = new Rect(0, Math.Max(0, selection.Y), Math.Max(0, selection.X), Math.Max(0, selection.Height));
-            var right = new Rect(Math.Max(0, selection.Right), Math.Max(0, selection.Y), Math.Max(0, Bounds.Width - selection.Right), Math.Max(0, selection.Height));
-            context.FillRectangle(DimBrush, top);
-            context.FillRectangle(DimBrush, bottom);
-            context.FillRectangle(DimBrush, left);
-            context.FillRectangle(DimBrush, right);
-            context.DrawRectangle(null, AccentPen, selection);
-            readout = DrawReadout(context, selection);
+            var src = new Rect(source.X, source.Y, source.Width, source.Height);
+            context.DrawImage(_session.Bitmap, src, dest);
+        }
+
+        var snip = _session.Snip;
+        Rect? readout = null;
+        if (snip.Selection is { } selection)
+        {
+            var local = map.LocalRect(_index, selection, view.Width, view.Height);
+            if (local is { } box && box.Width > 0 && box.Height > 0)
+            {
+                DimOutside(context, view, box);
+                context.DrawRectangle(null, AccentPen, box);
+                if (Owns(new PixelPoint(selection.X, selection.Y)))
+                    readout = DrawReadout(context, box, selection);
+            }
+            else
+            {
+                context.FillRectangle(DimBrush, view);
+            }
         }
         else
         {
-            context.FillRectangle(DimBrush, bounds);
+            context.FillRectangle(DimBrush, view);
         }
 
-        if (_hasPointer)
+        if (!snip.HasCursor || !Owns(snip.Cursor)) return;
+        var cursor = map.LocalCenter(_index, snip.Cursor, view.Width, view.Height);
+        if (snip.KeyboardCursor)
         {
-            if (_keyboardCursor)
-            {
-                context.DrawLine(CrosshairPen, new Point(_cursor.X - 8, _cursor.Y), new Point(_cursor.X + 8, _cursor.Y));
-                context.DrawLine(CrosshairPen, new Point(_cursor.X, _cursor.Y - 8), new Point(_cursor.X, _cursor.Y + 8));
-            }
-            if (_settings.ShowMagnifier) DrawMagnifier(context, readout);
+            context.DrawLine(CrosshairPen, new Point(cursor.X - 8, cursor.Y), new Point(cursor.X + 8, cursor.Y));
+            context.DrawLine(CrosshairPen, new Point(cursor.X, cursor.Y - 8), new Point(cursor.X, cursor.Y + 8));
         }
+        if (_session.Settings.ShowMagnifier) DrawMagnifier(context, cursor, readout, view);
     }
 
-    Rect DrawReadout(DrawingContext context, Rect selection)
+    bool Owns(PixelPoint point) => _session.Map.IndexAt(point) == _index;
+
+    static void DimOutside(DrawingContext context, Rect view, Rect box)
     {
-        double sx = _frame.Width / Math.Max(1, Bounds.Width);
-        double sy = _frame.Height / Math.Max(1, Bounds.Height);
-        int width = Math.Max(1, (int)Math.Round(selection.Width * sx));
-        int height = Math.Max(1, (int)Math.Round(selection.Height * sy));
-        var text = new FormattedText($"{width} × {height}", CultureInfo.InvariantCulture,
+        var top = new Rect(0, 0, view.Width, Math.Max(0, box.Y));
+        var bottom = new Rect(0, Math.Max(0, box.Bottom), view.Width, Math.Max(0, view.Height - box.Bottom));
+        var left = new Rect(0, Math.Max(0, box.Y), Math.Max(0, box.X), Math.Max(0, box.Height));
+        var right = new Rect(Math.Max(0, box.Right), Math.Max(0, box.Y), Math.Max(0, view.Width - box.Right), Math.Max(0, box.Height));
+        if (top.Height > 0) context.FillRectangle(DimBrush, top);
+        if (bottom.Height > 0) context.FillRectangle(DimBrush, bottom);
+        if (left.Width > 0) context.FillRectangle(DimBrush, left);
+        if (right.Width > 0) context.FillRectangle(DimBrush, right);
+    }
+
+    Rect DrawReadout(DrawingContext context, Rect box, PixelRect selection)
+    {
+        string label = _session.Map.TryToImage(selection, out var image)
+            ? $"{image.Width} × {image.Height}"
+            : $"{selection.Width} × {selection.Height}";
+        var text = new FormattedText(label, CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, _typeface, 13, AppTheme.Text);
         const double padX = 9, padY = 5;
         double boxW = text.Width + padX * 2;
         double boxH = text.Height + padY * 2;
-
-        // Sit just above the selection's top-left corner; if the selection touches
-        // the top edge, keep the readout inside its top-left corner instead.
-        double x = selection.Left;
-        double y = selection.Top - boxH - 8;
+        double x = box.Left;
+        double y = box.Top - boxH - 8;
         if (y < 4)
         {
-            x = selection.Left + 8;
-            y = selection.Top + 8;
+            x = box.Left + 8;
+            y = box.Top + 8;
         }
         x = Math.Clamp(x, 4, Math.Max(4, Bounds.Width - boxW - 4));
         y = Math.Clamp(y, 4, Math.Max(4, Bounds.Height - boxH - 4));
-        var box = new Rect(x, y, boxW, boxH);
-        context.DrawRectangle(ReadoutBrush, null, box, 5, 5);
+        var frame = new Rect(x, y, boxW, boxH);
+        context.DrawRectangle(ReadoutBrush, null, frame, 5, 5);
         context.DrawText(text, new Point(x + padX, y + padY));
-        return box;
+        return frame;
     }
 
-    static bool Overlaps(Rect a, Rect b) =>
-        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
+    void DrawMagnifier(DrawingContext context, Point cursor, Rect? readout, Rect view)
+    {
+        if (!_session.Map.TryToImage(new PixelRect(_session.Snip.Cursor.X, _session.Snip.Cursor.Y, 1, 1), out var pixel))
+            return;
 
-    Rect PlaceMagnifier(double width, double height, Rect? readout)
+        const double inner = 104;
+        const double pad = 3;
+        const double labelHeight = 20;
+        double total = inner + pad * 2;
+        var box = PlaceMagnifier(cursor, total, total + labelHeight, readout, view);
+        int imageX = Math.Clamp(pixel.X, 0, Math.Max(0, _session.Bitmap.PixelSize.Width - 1));
+        int imageY = Math.Clamp(pixel.Y, 0, Math.Max(0, _session.Bitmap.PixelSize.Height - 1));
+        int frameW = _session.Bitmap.PixelSize.Width;
+        int frameH = _session.Bitmap.PixelSize.Height;
+        const int sourceSize = 24;
+        int left = Math.Clamp(imageX - sourceSize / 2, 0, Math.Max(0, frameW - sourceSize));
+        int top = Math.Clamp(imageY - sourceSize / 2, 0, Math.Max(0, frameH - sourceSize));
+        var source = new Rect(left, top, Math.Min(sourceSize, frameW), Math.Min(sourceSize, frameH));
+        var dest = new Rect(box.X + pad, box.Y + pad, inner, inner);
+
+        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(box.X, box.Y, total, total + labelHeight), 7, 7);
+        using (context.PushClip(dest))
+            context.DrawImage(_session.Bitmap, source, dest);
+        var center = dest.Center;
+        context.DrawLine(CrosshairPen, new Point(center.X - 7, center.Y), new Point(center.X + 7, center.Y));
+        context.DrawLine(CrosshairPen, new Point(center.X, center.Y - 7), new Point(center.X, center.Y + 7));
+
+        var label = new FormattedText($"{_session.Snip.Cursor.X}, {_session.Snip.Cursor.Y}", CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, _typeface, 11, AppTheme.Muted);
+        context.DrawText(label, new Point(box.X + (total - label.Width) / 2, box.Y + total + 2));
+    }
+
+    static Rect PlaceMagnifier(Point cursor, double width, double height, Rect? readout, Rect view)
     {
         const double gap = 22;
         const double margin = 4;
 
         Rect? TryAt(double x, double y)
         {
-            if (x < margin || y < margin ||
-                x + width > Bounds.Width - margin ||
-                y + height > Bounds.Height - margin)
+            if (x < margin || y < margin || x + width > view.Width - margin || y + height > view.Height - margin)
                 return null;
             var rect = new Rect(x, y, width, height);
             if (readout is { } box && Overlaps(rect, box)) return null;
             return rect;
         }
 
-        double right = _cursor.X + gap;
-        double left = _cursor.X - width - gap;
-        double down = _cursor.Y + gap;
-        double up = _cursor.Y - height - gap;
-
+        double right = cursor.X + gap;
+        double left = cursor.X - width - gap;
+        double down = cursor.Y + gap;
+        double up = cursor.Y - height - gap;
         var found = TryAt(right, down) ?? TryAt(left, down) ?? TryAt(right, up) ?? TryAt(left, up);
-        if (found == null && readout is { } r)
+        if (found == null && readout is { } blocked)
         {
-            found = TryAt(r.Right + gap, down)
-                    ?? TryAt(r.Left - width - gap, down)
-                    ?? TryAt(right, r.Bottom + gap)
-                    ?? TryAt(right, r.Top - height - gap)
-                    ?? TryAt(left, r.Bottom + gap)
-                    ?? TryAt(left, r.Top - height - gap);
+            found = TryAt(blocked.Right + gap, down)
+                    ?? TryAt(blocked.Left - width - gap, down)
+                    ?? TryAt(right, blocked.Bottom + gap)
+                    ?? TryAt(right, blocked.Top - height - gap)
+                    ?? TryAt(left, blocked.Bottom + gap)
+                    ?? TryAt(left, blocked.Top - height - gap);
         }
         if (found is { } placed) return placed;
 
-        // Tiny screen: flip away from the nearest edges and clamp to the bounds.
         double fx = right;
         double fy = down;
-        if (fx + width > Bounds.Width - margin) fx = left;
-        if (fy + height > Bounds.Height - margin) fy = up;
-        fx = Math.Clamp(fx, margin, Math.Max(margin, Bounds.Width - width - margin));
-        fy = Math.Clamp(fy, margin, Math.Max(margin, Bounds.Height - height - margin));
+        if (fx + width > view.Width - margin) fx = left;
+        if (fy + height > view.Height - margin) fy = up;
+        fx = Math.Clamp(fx, margin, Math.Max(margin, view.Width - width - margin));
+        fy = Math.Clamp(fy, margin, Math.Max(margin, view.Height - height - margin));
         return new Rect(fx, fy, width, height);
     }
 
-    void DrawMagnifier(DrawingContext context, Rect? readout)
-    {
-        const double inner = 104;
-        const double pad = 3;
-        const double labelHeight = 20;
-        double total = inner + pad * 2;
-        var box = PlaceMagnifier(total, total + labelHeight, readout);
-        double x = box.X;
-        double y = box.Y;
-
-        int imageX = Math.Clamp((int)(_cursor.X * _frame.Width / Math.Max(1, Bounds.Width)), 0, _frame.Width - 1);
-        int imageY = Math.Clamp((int)(_cursor.Y * _frame.Height / Math.Max(1, Bounds.Height)), 0, _frame.Height - 1);
-        int sourceSize = 24;
-        int left = Math.Clamp(imageX - sourceSize / 2, 0, Math.Max(0, _frame.Width - sourceSize));
-        int top = Math.Clamp(imageY - sourceSize / 2, 0, Math.Max(0, _frame.Height - sourceSize));
-        var source = new Rect(left, top, Math.Min(sourceSize, _frame.Width), Math.Min(sourceSize, _frame.Height));
-        var dest = new Rect(x + pad, y + pad, inner, inner);
-
-        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(x, y, total, total + labelHeight), 7, 7);
-        using (context.PushClip(dest))
-        {
-            context.DrawImage(_bitmap, source, dest);
-        }
-        var center = dest.Center;
-        context.DrawLine(CrosshairPen, new Point(center.X - 7, center.Y), new Point(center.X + 7, center.Y));
-        context.DrawLine(CrosshairPen, new Point(center.X, center.Y - 7), new Point(center.X, center.Y + 7));
-
-        var label = new FormattedText($"{imageX}, {imageY}", CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, _typeface, 11, AppTheme.Muted);
-        context.DrawText(label, new Point(x + (total - label.Width) / 2, y + total + 2));
-    }
+    static bool Overlaps(Rect a, Rect b) =>
+        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
 }

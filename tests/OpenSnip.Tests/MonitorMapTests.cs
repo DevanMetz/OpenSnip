@@ -41,6 +41,15 @@ public class MonitorMapTests
     }
 
     [Fact]
+    public void Local_center_of_a_pixel_stays_on_that_pixel()
+    {
+        var map = Mixed();
+        var point = map.LocalCenter(1, new PixelPoint(1920, 0), 1920, 1080);
+        Assert.Equal(0.5 * 1920 / 3840d, point.X, 3);
+        Assert.InRange(point.Y, 0, 1);
+    }
+
+    [Fact]
     public void Full_monitor_crop_is_that_monitors_pixels()
     {
         var map = Mixed();

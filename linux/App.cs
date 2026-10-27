@@ -191,8 +191,7 @@ sealed class App : Application
             if (delaySeconds > 0) await CountdownWindow.RunAsync(delaySeconds);
 
             var frame = await CaptureService.CaptureAsync();
-            var overlay = new OverlayWindow(frame, Settings);
-            var region = await overlay.SelectAsync();
+            var region = await OverlayWindow.SelectAsync(frame, Settings);
             if (region is not { } selected) return;
 
             _lastRegion = selected;

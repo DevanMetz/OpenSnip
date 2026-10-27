@@ -168,6 +168,14 @@ sealed class MonitorMap
     /// <paramref name="dipX"/> is allowed to fall outside the window while a drag is grabbed,
     /// so the result can land on a neighboring monitor. The caller clamps it to the desktop.
     /// </summary>
+    public Point LocalCenter(int index, PixelPoint desktop, double dipWidth, double dipHeight)
+    {
+        var bounds = _monitors[index].Bounds;
+        double x = bounds.Width <= 0 ? 0 : (desktop.X - bounds.X + 0.5) * dipWidth / bounds.Width;
+        double y = bounds.Height <= 0 ? 0 : (desktop.Y - bounds.Y + 0.5) * dipHeight / bounds.Height;
+        return new Point(x, y);
+    }
+
     public PixelPoint DesktopPoint(int index, double dipX, double dipY, double dipWidth, double dipHeight)
     {
         var bounds = _monitors[index].Bounds;
