@@ -43,6 +43,8 @@ sealed class OverlayWindow : Window
         Closed += (_, _) => _result.TrySetResult(null);
     }
 
+    public PixelRect VirtualBounds => _virtualBounds;
+
     public Task<PixelRect?> SelectAsync()
     {
         Show();
@@ -86,6 +88,7 @@ sealed class CaptureCanvas : Control
     bool _dragging;
     bool _hasPointer;
     bool _keyboardCursor;
+    IPointer _pointer;
     Point _start;
     Point _end;
     Point _cursor;
@@ -109,54 +112,97 @@ sealed class CaptureCanvas : Control
 
     public bool HandleKey(KeyEventArgs e)
     {
-        switch (e.Key)
-        {
-            case Key.Escape:
-                _complete(null);
-                return true;
-            case Key.Enter:
-                if (_selection is { } current) _complete(ToImageRect(current));
-                else _complete(MonitorAt(CurrentCursor()));
-                return true;
-            case Key.A:
-                _selection = new Rect(0, 0, Bounds.Width, Bounds.Height);
-                _keyboardCursor = false;
-                InvalidateVisual();
-                return true;
-            case Key.F:
-                _selection = MonitorRect(CurrentCursor());
-                _keyboardCursor = false;
-                InvalidateVisual();
-                return true;
-            case Key.Left:
-            case Key.Right:
-            case Key.Up:
-            case Key.Down:
-                Nudge(e.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
-                return true;
-        }
-        return false;
+        if (!TryMapKey(e.Key, out var key)) return false;
+        bool pastSlop = DragPastSlop();
+        bool ready = pastSlop && SelectionReady;
+        Apply(SnipGesture.FromKey(key, e.KeyModifiers.HasFlag(KeyModifiers.Shift), _dragging, ready, pastSlop));
+        return true;
     }
 
-    void Nudge(Key key, bool large)
+    bool DragPastSlop()
     {
-        double step = large ? 10 : 1;
-        var delta = key switch
+        if (!_dragging) return false;
+        return Math.Abs(_end.X - _start.X) > 3 || Math.Abs(_end.Y - _start.Y) > 3;
+    }
+
+    static bool TryMapKey(Key key, out SnipKey mapped)
+    {
+        switch (key)
         {
-            Key.Left => new Vector(-step, 0),
-            Key.Right => new Vector(step, 0),
-            Key.Up => new Vector(0, -step),
-            _ => new Vector(0, step),
-        };
-        if (!_hasPointer)
-        {
-            _cursor = new Point(Bounds.Width / 2, Bounds.Height / 2);
-            _hasPointer = true;
+            case Key.Escape: mapped = SnipKey.Escape; return true;
+            case Key.Enter: mapped = SnipKey.Enter; return true;
+            case Key.F: mapped = SnipKey.Monitor; return true;
+            case Key.A: mapped = SnipKey.All; return true;
+            case Key.Left: mapped = SnipKey.Left; return true;
+            case Key.Right: mapped = SnipKey.Right; return true;
+            case Key.Up: mapped = SnipKey.Up; return true;
+            case Key.Down: mapped = SnipKey.Down; return true;
+            default: mapped = default; return false;
         }
-        _cursor = ClampPoint(_cursor + delta);
-        if (_selection is { } current)
-            _selection = ClampRect(current.Translate(delta));
-        _keyboardCursor = true;
+    }
+
+    bool SelectionReady => _selection is { Width: >= 1, Height: >= 1 };
+
+    void Apply(SnipGesture gesture)
+    {
+        switch (gesture.Kind)
+        {
+            case SnipGestureKind.Cancel:
+                _complete(null);
+                break;
+            case SnipGestureKind.ResetDrag:
+                ResetDrag();
+                break;
+            case SnipGestureKind.CompleteSelection:
+                if (_selection is { } current) _complete(ToImageRect(current));
+                break;
+            case SnipGestureKind.CompleteMonitor:
+                _complete(MonitorAt(CurrentCursor()));
+                break;
+            case SnipGestureKind.CompleteAll:
+                _complete(new PixelRect(0, 0, _frame.Width, _frame.Height));
+                break;
+            case SnipGestureKind.Nudge:
+                Nudge(gesture.Dx, gesture.Dy);
+                break;
+        }
+    }
+
+    void ResetDrag()
+    {
+        _dragging = false;
+        _selection = null;
+        try { _pointer?.Capture(null); } catch { }
+        _pointer = null;
+        InvalidateVisual();
+    }
+
+    void Nudge(int dx, int dy)
+    {
+        if (X11Cursor.TryGet() is { } pointer)
+        {
+            var screen = SnipGeometry.ClampTo(pointer.X + dx, pointer.Y + dy, _virtualBounds);
+            bool warped = X11Cursor.TryWarp(screen.X, screen.Y);
+            MoveCursor(ScreenToLocal(screen.X, screen.Y), keyboard: !warped);
+            return;
+        }
+
+        var delta = SnipGeometry.ControlDelta(dx, dy, Bounds.Width, Bounds.Height, _frame.Width, _frame.Height);
+        var origin = _hasPointer ? _cursor : new Point(Bounds.Width / 2, Bounds.Height / 2);
+        MoveCursor(origin + new Vector(delta.X, delta.Y), keyboard: true);
+    }
+
+    void MoveCursor(Point local, bool keyboard)
+    {
+        _cursor = ClampPoint(local);
+        _hasPointer = true;
+        _keyboardCursor = keyboard;
+        if (_dragging)
+        {
+            _end = _cursor;
+            var rect = RectFromPoints(_start, _end);
+            _selection = rect.Width >= 1 && rect.Height >= 1 ? rect : null;
+        }
         InvalidateVisual();
     }
 
@@ -167,13 +213,14 @@ sealed class CaptureCanvas : Control
         var point = e.GetPosition(this);
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
         {
-            _complete(null);
+            Apply(SnipGesture.FromRightClick(_dragging));
             e.Handled = true;
             return;
         }
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
         _dragging = true;
+        _pointer = e.Pointer;
         _start = _end = _cursor = ClampPoint(point);
         _hasPointer = true;
         _keyboardCursor = false;
@@ -189,6 +236,7 @@ sealed class CaptureCanvas : Control
         var point = ClampPoint(e.GetPosition(this));
         _cursor = point;
         _hasPointer = true;
+        _keyboardCursor = false;
         if (_dragging)
         {
             _end = point;
@@ -203,6 +251,7 @@ sealed class CaptureCanvas : Control
         base.OnPointerReleased(e);
         if (!_dragging) return;
         _dragging = false;
+        _pointer = null;
         e.Pointer.Capture(null);
         var point = ClampPoint(e.GetPosition(this));
         _cursor = point;
@@ -233,17 +282,24 @@ sealed class CaptureCanvas : Control
     Point ClampPoint(Point point) =>
         new(Math.Clamp(point.X, 0, Math.Max(0, Bounds.Width)), Math.Clamp(point.Y, 0, Math.Max(0, Bounds.Height)));
 
-    Rect ClampRect(Rect rect)
-    {
-        double x = Math.Clamp(rect.X, 0, Math.Max(0, Bounds.Width - rect.Width));
-        double y = Math.Clamp(rect.Y, 0, Math.Max(0, Bounds.Height - rect.Height));
-        return new Rect(x, y, rect.Width, rect.Height);
-    }
-
     Point CurrentCursor()
     {
         if (_hasPointer) return _cursor;
-        return new Point(Bounds.Width / 2, Bounds.Height / 2);
+        if (Bounds.Width > 1 && X11Cursor.TryGet() is { } pointer)
+        {
+            _cursor = ClampPoint(ScreenToLocal(pointer.X, pointer.Y));
+            _hasPointer = true;
+            return _cursor;
+        }
+        if (Bounds.Width > 1) return new Point(Bounds.Width / 2, Bounds.Height / 2);
+        return new Point(0, 0);
+    }
+
+    Point ScreenToLocal(int screenX, int screenY)
+    {
+        double sx = Bounds.Width / Math.Max(1, _virtualBounds.Width);
+        double sy = Bounds.Height / Math.Max(1, _virtualBounds.Height);
+        return new Point((screenX - _virtualBounds.X) * sx, (screenY - _virtualBounds.Y) * sy);
     }
 
     Rect MonitorRect(Point local)
@@ -287,6 +343,7 @@ sealed class CaptureCanvas : Control
 
     public override void Render(DrawingContext context)
     {
+        if (!_hasPointer) CurrentCursor();
         base.Render(context);
         var bounds = new Rect(0, 0, Bounds.Width, Bounds.Height);
         context.DrawImage(_bitmap, bounds);
