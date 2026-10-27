@@ -117,7 +117,7 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 The Linux app is a separate native Avalonia build. It covers the screenshot side of OpenSnip; recording, the annotation editor, pins and built-in global shortcuts remain Windows-only.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a pixel-grid magnifier that shows the coordinate and color; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -207,7 +207,7 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `src/Imaging.cs` | Screen capture, window detection, clipboard, saving, icon |
 | `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
-| `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
+| `linux/OverlayWindow.cs` / `linux/Magnifier.cs` | Linux selection overlay and pixel magnifier |
 | `linux/SettingsWindow.cs` | Linux Settings window |
 
 ## License
