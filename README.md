@@ -115,9 +115,9 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 ## Linux
 
-The Linux app is a separate native Avalonia build. It covers the screenshot side of OpenSnip; recording, the annotation editor, pins and built-in global shortcuts remain Windows-only.
+The Linux app is a separate native Avalonia build. It covers screenshots and annotation; recording, pins and built-in global shortcuts remain Windows-only.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; tray icon; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -129,7 +129,7 @@ cd OpenSnip-linux-x64
 
 The installer copies the binary to `~/.local/bin/opensnip`, so make sure `~/.local/bin` is on your `PATH`.
 
-**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support. A tray host is optional: without one, Settings opens on launch and closing it quits OpenSnip.
+**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support. A tray host is optional. Without one, Settings opens on launch and closing it quits OpenSnip, unless an editor is still open. `opensnip --edit file.png` opens only the editor.
 
 ### Shortcuts
 
@@ -147,10 +147,15 @@ There are no built-in global shortcuts on Linux; bind your own in GNOME Settings
 | Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
 | `Esc` / right-click | Cancel |
 
+### Annotating
+
+Click the preview to annotate, or drag it to drop the file. The tray command **Open image in editor…** and `opensnip --edit file.png` open an existing image. Settings can open the editor instead of the preview. Keys match the editor table above. Pin (`P`) is Windows-only. Edits are copied to the clipboard.
+
 ### Command line
 
 ```bash
 opensnip --capture file.png   # capture the whole desktop without UI
+opensnip --edit file.png      # open an image in the editor
 opensnip --diagnostics [file] # print (and optionally write) a diagnostic report
 opensnip --help
 ```
@@ -208,6 +213,8 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
+| `linux/Annotation.cs` | Annotation shapes for the Linux editor |
+| `linux/EditorWindow.cs` | Linux annotation editor |
 | `linux/SettingsWindow.cs` | Linux Settings window |
 
 ## License
