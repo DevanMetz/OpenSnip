@@ -137,6 +137,7 @@ static class SingleInstance
         LaunchAction.SnipDelay => "snip-delay",
         LaunchAction.Repeat => "repeat",
         LaunchAction.Settings => "settings",
+        LaunchAction.Record => "record",
         _ => "snip",
     };
 
@@ -145,6 +146,7 @@ static class SingleInstance
         "snip-delay" => LaunchAction.SnipDelay,
         "repeat" => LaunchAction.Repeat,
         "settings" => LaunchAction.Settings,
+        "record" => LaunchAction.Record,
         _ => LaunchAction.Snip,
     };
 

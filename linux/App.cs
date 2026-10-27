@@ -15,11 +15,14 @@ sealed class App : Application
     IClassicDesktopStyleApplicationLifetime _desktop;
     TrayIcon _tray;
     NativeMenuItem _delayItem;
+    NativeMenuItem _recordItem;
     SettingsWindow _settingsWindow;
     ThumbnailWindow _thumbnail;
+    RecordingSession _recording;
     PixelRect? _lastRegion;
     bool _trayAvailable;
     bool _busy;
+    bool _exiting;
 
     public App()
     {
@@ -94,6 +97,9 @@ sealed class App : Application
             case LaunchAction.Settings:
                 ShowSettings();
                 break;
+            case LaunchAction.Record:
+                ToggleRecording();
+                break;
         }
     }
 
@@ -101,11 +107,14 @@ sealed class App : Application
     {
         var menu = new NativeMenu();
         menu.Add(Item("Snip", () => StartSnip()));
+        _recordItem = Item("Record video", () => _ = DelayedRecord());
+        menu.Add(_recordItem);
         _delayItem = Item($"Snip after delay ({Settings.DelaySeconds}s)", () => StartSnip(Settings.DelaySeconds));
         menu.Add(_delayItem);
         menu.Add(Item("Repeat last region", RepeatLast));
         menu.Add(new NativeMenuItemSeparator());
         menu.Add(Item("Open screenshots folder", OpenScreenshotsFolder));
+        menu.Add(Item("Open recordings folder", OpenRecordingsFolder));
         menu.Add(Item("Settings…", () => ShowSettings()));
         menu.Add(new NativeMenuItemSeparator());
         menu.Add(Item("Exit", ExitApp));
@@ -117,7 +126,11 @@ sealed class App : Application
             Menu = menu,
             IsVisible = true,
         };
-        _tray.Clicked += (_, _) => StartSnip();
+        _tray.Clicked += (_, _) =>
+        {
+            if (_recording != null) ToggleRecording();
+            else StartSnip();
+        };
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
     }
 
@@ -136,7 +149,15 @@ sealed class App : Application
             case LaunchAction.SnipDelay: StartSnip(Settings.DelaySeconds); break;
             case LaunchAction.Repeat: RepeatLast(); break;
             case LaunchAction.Settings: ShowSettings(); break;
+            case LaunchAction.Record: ToggleRecording(); break;
         }
+    }
+
+    void UpdateRecordingUi()
+    {
+        bool on = _recording != null;
+        if (_recordItem != null) _recordItem.Header = on ? "Stop recording" : "Record video";
+        if (_tray != null) _tray.ToolTipText = on ? "OpenSnip — recording (click to stop)" : "OpenSnip";
     }
 
     public void SettingsChanged()
@@ -179,9 +200,137 @@ sealed class App : Application
         }
     }
 
+    public void OpenRecordingsFolder()
+    {
+        try
+        {
+            string folder = Settings.FolderFor(Settings.VideoFolder);
+            Directory.CreateDirectory(folder);
+            PlatformInfo.Open(folder);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            _ = ShowErrorAsync("Could not open the recordings folder: " + ex.Message);
+        }
+    }
+
+    async Task DelayedRecord()
+    {
+        if (_recording != null)
+        {
+            ToggleRecording();
+            return;
+        }
+        await Task.Delay(200);
+        if (_exiting || _recording != null || _busy) return;
+        ToggleRecording();
+    }
+
+    public void ToggleRecording()
+    {
+        if (_recording != null)
+        {
+            try { _recording.Stop(); }
+            catch (Exception ex) { Log.Error(ex); }
+            return;
+        }
+        StartRecording();
+    }
+
+    public async void StartRecording()
+    {
+        if (_recording != null || _busy || _exiting) return;
+        if (!FfmpegPlan.Available)
+        {
+            await ShowErrorAsync("Screen recording needs ffmpeg.");
+            return;
+        }
+        if (PlatformInfo.IsWayland || !PlatformInfo.HasDisplay)
+        {
+            await ShowErrorAsync("Screen recording needs an X11 session.");
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            bool hadThumbnail = _thumbnail != null;
+            CloseThumbnail();
+            if (hadThumbnail) await Task.Delay(100);
+
+            var frame = await CaptureService.CaptureAsync();
+            var overlay = new OverlayWindow(frame, Settings, record: true);
+            var region = await overlay.SelectAsync();
+            if (region is not { } selected) return;
+
+            var monitors = X11Monitors.Query();
+            if (monitors.Count == 0)
+                monitors = new[] { new PixelRect(0, 0, frame.Width, frame.Height) };
+            if (!RecordGeometry.TryNormalize(selected, monitors, out var area))
+            {
+                await ShowErrorAsync("That area is too small to record.");
+                return;
+            }
+
+            var audio = await Task.Run(AudioDevices.Discover);
+            string system = Settings.RecordSystemAudio ? audio.SystemSource : null;
+            string mic = Settings.RecordMicrophone ? audio.ResolveMicrophone(Settings.MicrophoneDevice) : null;
+            var session = new RecordingSession(area, Settings, system, mic);
+            session.Saved += (path, preview) => Dispatcher.UIThread.Post(() => _ = OnRecordingSavedAsync(session, path, preview));
+            session.Failed += message => Dispatcher.UIThread.Post(() =>
+            {
+                if (!ReferenceEquals(_recording, session) && _recording != null) return;
+                _ = ShowErrorAsync(message);
+            });
+            session.Ended += () => Dispatcher.UIThread.Post(() =>
+            {
+                if (ReferenceEquals(_recording, session)) _recording = null;
+                UpdateRecordingUi();
+            });
+            _recording = session;
+            UpdateRecordingUi();
+            session.Begin();
+        }
+        catch (CaptureException ex)
+        {
+            Log.Error(ex);
+            await ShowErrorAsync(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            await ShowErrorAsync("Couldn't start recording: " + ex.Message);
+            if (_recording != null)
+            {
+                try { _recording.Discard(); } catch { }
+                _recording = null;
+                UpdateRecordingUi();
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task OnRecordingSavedAsync(RecordingSession session, string path, CapturedFrame preview)
+    {
+        if (_exiting || (_recording != null && !ReferenceEquals(_recording, session))) return;
+        bool copied = false;
+        if (Settings.CopyRecordingToClipboard && !string.IsNullOrEmpty(path))
+        {
+            try { copied = await ClipboardService.CopyFileAsync(path); }
+            catch (Exception ex) { Log.Error(ex); }
+        }
+        if (_exiting) return;
+        if ((Settings.ShowThumbnail || !copied) && preview != null)
+            ShowThumbnail(preview, path, Math.Max(Settings.PreviewSeconds, 8), play: true);
+    }
+
     public async void StartSnip(int delaySeconds = 0)
     {
-        if (_busy) return;
+        if (_recording != null || _busy) return;
         _busy = true;
         try
         {
@@ -217,7 +366,7 @@ sealed class App : Application
 
     public async void RepeatLast()
     {
-        if (_busy) return;
+        if (_recording != null || _busy) return;
         if (_lastRegion is not { } region)
         {
             StartSnip();
@@ -293,10 +442,10 @@ sealed class App : Application
             ShowThumbnail(frame, saved);
     }
 
-    void ShowThumbnail(CapturedFrame frame, string path)
+    void ShowThumbnail(CapturedFrame frame, string path, int? seconds = null, bool play = false)
     {
         CloseThumbnail();
-        var thumbnail = new ThumbnailWindow(frame, path, Settings.PreviewSeconds);
+        var thumbnail = new ThumbnailWindow(frame, path, seconds ?? Settings.PreviewSeconds, play);
         thumbnail.Closed += (_, _) =>
         {
             if (ReferenceEquals(_thumbnail, thumbnail)) _thumbnail = null;
@@ -314,6 +463,7 @@ sealed class App : Application
 
     async Task ShowErrorAsync(string message)
     {
+        if (_exiting || string.IsNullOrWhiteSpace(message)) return;
         try
         {
             var owner = _settingsWindow;
@@ -328,6 +478,11 @@ sealed class App : Application
 
     public void ExitApp()
     {
+        if (_exiting) return;
+        _exiting = true;
+        try { _recording?.Stop(); } catch (Exception ex) { Log.Error(ex); }
+        _recording = null;
+        CloseThumbnail();
         try { _tray?.Dispose(); } catch { }
         _tray = null;
         SingleInstance.Stop();

@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Shapes = Avalonia.Controls.Shapes;
 
 namespace OpenSnip;
 
@@ -14,7 +15,7 @@ sealed class ThumbnailWindow : Window
     readonly string _path;
     readonly DispatcherTimer _timer;
 
-    public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds)
+    public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds, bool play = false)
     {
         _path = savedPath;
         Title = "OpenSnip";
@@ -48,13 +49,16 @@ sealed class ThumbnailWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var picture = new Grid();
+        picture.Children.Add(image);
+        if (play) picture.Children.Add(PlayBadge());
         Content = new Border
         {
             Background = AppTheme.Panel,
             BorderBrush = AppTheme.Border,
             BorderThickness = new Thickness(1),
             Padding = new Thickness(3),
-            Child = image,
+            Child = picture,
         };
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, seconds)) };
@@ -66,6 +70,35 @@ sealed class ThumbnailWindow : Window
         };
         Closed += (_, _) => _timer.Stop();
         PointerPressed += OnPressed;
+    }
+
+    static Control PlayBadge()
+    {
+        var points = new Points();
+        points.Add(new Point(0, 0));
+        points.Add(new Point(0, 18));
+        points.Add(new Point(16, 9));
+        return new Border
+        {
+            Width = 46,
+            Height = 46,
+            CornerRadius = new CornerRadius(23),
+            Background = new SolidColorBrush(Color.FromArgb(176, 20, 20, 24)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = new Shapes.Polygon
+            {
+                Points = points,
+                Fill = Brushes.White,
+                Width = 16,
+                Height = 18,
+                Stretch = Stretch.Fill,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(3, 0, 0, 0),
+            },
+        };
     }
 
     void PlaceBottomRight()

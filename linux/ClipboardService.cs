@@ -10,32 +10,32 @@ static class ClipboardService
 {
     static Window _hidden;
 
+    public static async Task<bool> CopyFileAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(FileUri.FromPath(path) + "\n");
+        if (await TryExternalAsync(bytes, "text/uri-list")) return true;
+        try
+        {
+            var clipboard = ClipboardOf(null);
+            if (clipboard == null) return false;
+            await clipboard.SetTextAsync(FileUri.FromPath(path));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            return false;
+        }
+    }
+
     public static async Task<bool> CopyPngAsync(byte[] png, TopLevel topLevel = null)
     {
         if (png == null || png.Length == 0) return false;
-        if (await TryExternalAsync(png)) return true;
+        if (await TryExternalAsync(png, "image/png")) return true;
         try
         {
-            var clipboard = topLevel?.Clipboard;
-            if (clipboard == null)
-            {
-                if (_hidden == null)
-                {
-                    _hidden = new Window
-                    {
-                        Width = 1,
-                        Height = 1,
-                        ShowInTaskbar = false,
-                        ShowActivated = false,
-                        SystemDecorations = SystemDecorations.None,
-                        Background = Brushes.Transparent,
-                        Opacity = 0,
-                        Position = new PixelPoint(-10000, -10000),
-                    };
-                    _hidden.Show();
-                }
-                clipboard = _hidden.Clipboard;
-            }
+            var clipboard = ClipboardOf(topLevel);
             if (clipboard == null) return false;
             var item = new DataTransferItem();
             item.Set(DataFormat.CreateBytesPlatformFormat("image/png"), png);
@@ -51,19 +51,41 @@ static class ClipboardService
         }
     }
 
-    static async Task<bool> TryExternalAsync(byte[] png)
+    static Avalonia.Input.Platform.IClipboard ClipboardOf(TopLevel topLevel)
+    {
+        var clipboard = topLevel?.Clipboard;
+        if (clipboard != null) return clipboard;
+        if (_hidden == null)
+        {
+            _hidden = new Window
+            {
+                Width = 1,
+                Height = 1,
+                ShowInTaskbar = false,
+                ShowActivated = false,
+                SystemDecorations = SystemDecorations.None,
+                Background = Brushes.Transparent,
+                Opacity = 0,
+                Position = new PixelPoint(-10000, -10000),
+            };
+            _hidden.Show();
+        }
+        return _hidden.Clipboard;
+    }
+
+    static async Task<bool> TryExternalAsync(byte[] payload, string mime)
     {
         string command = null;
         string[] args = null;
         if (PlatformInfo.IsWayland && PlatformInfo.CommandExists("wl-copy"))
         {
             command = "wl-copy";
-            args = new[] { "--type", "image/png" };
+            args = new[] { "--type", mime };
         }
         else if (!PlatformInfo.IsWayland && PlatformInfo.CommandExists("xclip"))
         {
             command = "xclip";
-            args = new[] { "-selection", "clipboard", "-t", "image/png", "-i" };
+            args = new[] { "-selection", "clipboard", "-t", mime, "-i" };
         }
         if (command == null) return false;
 
@@ -79,7 +101,7 @@ static class ClipboardService
             foreach (var arg in args) psi.ArgumentList.Add(arg);
             using var process = Process.Start(psi);
             if (process == null) return false;
-            await process.StandardInput.BaseStream.WriteAsync(png);
+            await process.StandardInput.BaseStream.WriteAsync(payload);
             process.StandardInput.Close();
 
             using var cts = new CancellationTokenSource(3000);
