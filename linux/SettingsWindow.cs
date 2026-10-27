@@ -31,6 +31,11 @@ sealed class SettingsWindow : Window
     ComboBox _format;
     CheckBox _monthly;
     CheckBox _startOnLogin;
+    CheckBox _printScreen;
+    TextBlock _shortcutStatus;
+    readonly List<ShortcutRow> _shortcuts = new();
+    ShortcutRow _listeningRow;
+    int _listenGeneration;
 
     public SettingsWindow(App app, string startPage = "Capture")
     {
@@ -96,7 +101,11 @@ sealed class SettingsWindow : Window
                 e.Handled = true;
             }
         };
-        Closed += (_, _) => app.SettingsWindowClosed(this);
+        Closed += (_, _) =>
+        {
+            StopShortcutCapture();
+            app.SettingsWindowClosed(this);
+        };
     }
 
     void AddPage(string name, Control page)
@@ -147,6 +156,7 @@ sealed class SettingsWindow : Window
 
     public void ShowPage(string name)
     {
+        StopShortcutCapture();
         if (!_pages.TryGetValue(name, out var page)) name = "Capture";
         if (!_pages.TryGetValue(name, out page)) return;
         _currentPage = name;
@@ -262,10 +272,34 @@ sealed class SettingsWindow : Window
     Control BuildShortcuts()
     {
         var panel = Page("Shortcuts");
-        panel.Children.Add(Heading("Commands"));
-        panel.Children.Add(CommandRow("Snip", PlatformInfo.Command("--snip")));
-        panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
-        panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
+        if (_app.HasGlobalHotkeys)
+        {
+            ShortcutRowFor(panel, "Snip", () => _s.SnipHotkey, v => _s.SnipHotkey = v);
+            ShortcutRowFor(panel, "Snip after delay", () => _s.DelayHotkey, v => _s.DelayHotkey = v);
+            ShortcutRowFor(panel, "Repeat last region", () => _s.RepeatHotkey, v => _s.RepeatHotkey = v);
+            _printScreen = Check("Also use the Print Screen key", _s.UsePrintScreen, v => _s.UsePrintScreen = v);
+            panel.Children.Add(_printScreen);
+            _shortcutStatus = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.Parse("#FFAA5A")),
+                FontSize = 12.5,
+                TextWrapping = TextWrapping.Wrap,
+                IsVisible = false,
+            };
+            panel.Children.Add(_shortcutStatus);
+            _refresh.Add(() =>
+            {
+                foreach (var row in _shortcuts) ShowShortcut(row);
+                if (_printScreen != null) _printScreen.IsChecked = _s.UsePrintScreen;
+            });
+        }
+        else
+        {
+            panel.Children.Add(Heading("Commands"));
+            panel.Children.Add(CommandRow("Snip", PlatformInfo.Command("--snip")));
+            panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
+            panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
+        }
         return panel;
     }
 
@@ -344,6 +378,7 @@ sealed class SettingsWindow : Window
 
     void ResetToDefaults()
     {
+        StopShortcutCapture();
         _s.CopyToClipboard = true;
         _s.AutoSave = true;
         _s.SaveFolder = SettingsDefaults.DefaultSaveFolder;
@@ -353,6 +388,10 @@ sealed class SettingsWindow : Window
         _s.PreviewSeconds = 6;
         _s.ShowMagnifier = true;
         _s.DelaySeconds = 3;
+        _s.SnipHotkey = "Win+Shift+S";
+        _s.DelayHotkey = "";
+        _s.RepeatHotkey = "";
+        _s.UsePrintScreen = true;
         Save();
         foreach (var refresh in _refresh) refresh();
     }
@@ -464,6 +503,129 @@ sealed class SettingsWindow : Window
         Foreground = AppTheme.Accent,
         Margin = new Thickness(0, 13, 0, 1),
     };
+
+    void ShortcutRowFor(StackPanel panel, string label, Func<string> get, Action<string> set)
+    {
+        var row = new ShortcutRow { Get = get, Set = set };
+        row.Value = new TextBlock
+        {
+            FontWeight = FontWeight.SemiBold,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var box = new Border
+        {
+            Background = AppTheme.Panel,
+            BorderBrush = AppTheme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            MinWidth = 180,
+            MinHeight = 32,
+            Padding = new Thickness(10, 4),
+            Child = row.Value,
+        };
+        row.Change = new Button { Content = "Change…", MinWidth = 88 };
+        var clear = new Button { Content = "Clear", MinWidth = 72 };
+        row.Change.Click += (_, _) =>
+        {
+            if (_listeningRow == row) StopShortcutCapture();
+            else StartShortcutCapture(row);
+        };
+        clear.Click += (_, _) =>
+        {
+            StopShortcutCapture();
+            row.Set("");
+            ShowShortcut(row);
+            Save();
+        };
+        var controls = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnSpacing = 8,
+        };
+        controls.Children.Add(box);
+        Grid.SetColumn(box, 0);
+        controls.Children.Add(row.Change);
+        Grid.SetColumn(row.Change, 1);
+        controls.Children.Add(clear);
+        Grid.SetColumn(clear, 2);
+        panel.Children.Add(Row(label, controls));
+        _shortcuts.Add(row);
+        ShowShortcut(row);
+    }
+
+    void ShowShortcut(ShortcutRow row)
+    {
+        var chord = HotkeyChord.Parse(row.Get());
+        bool listening = _listeningRow == row;
+        row.Value.Text = listening ? "Press keys…" : chord.Display;
+        row.Value.Foreground = listening ? AppTheme.Accent : chord.IsEmpty ? AppTheme.Muted : AppTheme.Text;
+        row.Change.Content = listening ? "Cancel" : "Change…";
+    }
+
+    void StartShortcutCapture(ShortcutRow row)
+    {
+        StopShortcutCapture();
+        int generation = ++_listenGeneration;
+        if (!_app.BeginShortcutCapture(chord =>
+            Dispatcher.UIThread.Post(() => OnShortcutCaptured(row, generation, chord))))
+        {
+            _ = MessageDialog.AlertAsync(this, "Couldn't listen for a shortcut.");
+            return;
+        }
+        _listeningRow = row;
+        if (_shortcutStatus != null) _shortcutStatus.IsVisible = false;
+        ShowShortcut(row);
+    }
+
+    void OnShortcutCaptured(ShortcutRow row, int generation, HotkeyChord? chord)
+    {
+        if (generation != _listenGeneration) return;
+        if (chord == null || (chord.Value.Key == "Escape" && !chord.Value.HasModifier))
+        {
+            StopShortcutCapture();
+            return;
+        }
+        if (!HotkeyGrabs.IsSafe(chord.Value))
+        {
+            if (_shortcutStatus != null)
+            {
+                _shortcutStatus.Text = $"{chord.Value.Display} needs Ctrl, Alt, Shift, or Win.";
+                _shortcutStatus.IsVisible = true;
+            }
+            return;
+        }
+        foreach (var other in _shortcuts)
+        {
+            if (ReferenceEquals(other, row)) continue;
+            if (HotkeyChord.Parse(other.Get()) == chord.Value)
+            {
+                other.Set("");
+                ShowShortcut(other);
+            }
+        }
+        row.Set(chord.Value.Serialize());
+        StopShortcutCapture();
+        Save();
+    }
+
+    void StopShortcutCapture()
+    {
+        _listenGeneration++;
+        var row = _listeningRow;
+        _listeningRow = null;
+        _app.EndShortcutCapture();
+        if (row != null) ShowShortcut(row);
+        if (_shortcutStatus != null) _shortcutStatus.IsVisible = false;
+    }
+
+    sealed class ShortcutRow
+    {
+        public Func<string> Get;
+        public Action<string> Set;
+        public TextBlock Value;
+        public Button Change;
+    }
 
     static Grid Row(string label, Control control)
     {

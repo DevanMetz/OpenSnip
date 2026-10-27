@@ -17,6 +17,7 @@ sealed class App : Application
     NativeMenuItem _delayItem;
     SettingsWindow _settingsWindow;
     ThumbnailWindow _thumbnail;
+    X11HotkeyService _hotkeys;
     PixelRect? _lastRegion;
     bool _trayAvailable;
     bool _busy;
@@ -61,6 +62,9 @@ sealed class App : Application
 
     async Task StartAsyncCore()
     {
+        try { _hotkeys = X11HotkeyService.TryStart(HotkeyBindings.From(Settings), OnHotkey); }
+        catch (Exception ex) { Log.Error(ex); }
+
         try { _trayAvailable = await DBus.TrayHostAvailableAsync(); }
         catch (Exception ex) { Log.Error(ex); _trayAvailable = false; }
 
@@ -119,6 +123,7 @@ sealed class App : Application
         };
         _tray.Clicked += (_, _) => StartSnip();
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
+        UpdateTrayText();
     }
 
     static NativeMenuItem Item(string header, Action action)
@@ -142,6 +147,39 @@ sealed class App : Application
     public void SettingsChanged()
     {
         if (_delayItem != null) _delayItem.Header = $"Snip after delay ({Settings.DelaySeconds}s)";
+        _hotkeys?.Update(HotkeyBindings.From(Settings));
+        UpdateTrayText();
+    }
+
+    public bool HasGlobalHotkeys => _hotkeys != null;
+
+    public bool BeginShortcutCapture(Action<HotkeyChord?> onChord) =>
+        _hotkeys != null && _hotkeys.BeginListen(onChord);
+
+    public void EndShortcutCapture() => _hotkeys?.EndListen();
+
+    void OnHotkey(HotkeyCommand command)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_busy) return;
+            switch (command)
+            {
+                case HotkeyCommand.Snip: StartSnip(); break;
+                case HotkeyCommand.SnipDelay: StartSnip(Settings.DelaySeconds); break;
+                case HotkeyCommand.Repeat: RepeatLast(); break;
+            }
+        });
+    }
+
+    void UpdateTrayText()
+    {
+        if (_tray == null) return;
+        var bindings = HotkeyBindings.From(Settings);
+        string keys = !bindings.Snip.IsEmpty ? bindings.Snip.Display
+            : bindings.UsePrintScreen ? "PrtSc" : null;
+        string text = keys != null ? $"OpenSnip — {keys} to snip" : "OpenSnip";
+        _tray.ToolTipText = text.Length <= 63 ? text : text[..62] + "…";
     }
 
     public void SettingsWindowClosed(SettingsWindow window)
@@ -328,6 +366,8 @@ sealed class App : Application
 
     public void ExitApp()
     {
+        try { _hotkeys?.Dispose(); } catch { }
+        _hotkeys = null;
         try { _tray?.Dispose(); } catch { }
         _tray = null;
         SingleInstance.Stop();

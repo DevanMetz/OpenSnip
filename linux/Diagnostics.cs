@@ -28,6 +28,10 @@ static class Diagnostics
         bool tray = await DBus.TrayHostAvailableAsync();
         report.AppendLine("xdg-desktop-portal: " + (portal ? "available" : "unavailable"));
         report.AppendLine("Tray host: " + (tray ? "available" : "unavailable"));
+        var settings = Settings.Load();
+        SettingsDefaults.ApplyLinux(settings);
+        string shortcuts = X11HotkeyService.IsSupported ? HotkeyBindings.From(settings).Summary : "off";
+        report.AppendLine("Global shortcuts: " + shortcuts);
         report.AppendLine("Settings: " + ConfigPaths.Dir);
 
         string text = report.ToString();

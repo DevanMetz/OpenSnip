@@ -115,9 +115,9 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 ## Linux
 
-The Linux app is a separate native Avalonia build. It covers the screenshot side of OpenSnip; recording, the annotation editor, pins and built-in global shortcuts remain Windows-only.
+The Linux app is a separate native Avalonia build. It covers the screenshot side of OpenSnip; recording, the annotation editor and pins remain Windows-only.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; global shortcuts on X11; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -133,7 +133,9 @@ The installer copies the binary to `~/.local/bin/opensnip`, so make sure `~/.loc
 
 ### Shortcuts
 
-There are no built-in global shortcuts on Linux; bind your own in GNOME Settings → Keyboard → Custom Shortcuts, or KDE System Settings → Shortcuts. Use `opensnip --snip` for a normal snip, `opensnip --snip-delay` for a delayed one, `opensnip --repeat` to re-capture the last region, and `opensnip --settings` to open settings.
+On X11, OpenSnip uses the same shortcuts as Windows. The defaults are `Win` + `Shift` + `S`, `PrtSc`, `Shift` + `PrtSc`, and `Ctrl` + `PrtSc`. Change them in **Settings → Shortcuts**. `Alt` + `PrtSc` and `Win` + `PrtSc` stay with the desktop, as does any chord the desktop already owns.
+
+On Wayland, bind `opensnip --snip`, `opensnip --snip-delay`, or `opensnip --repeat` in the desktop's shortcut settings. `opensnip --settings` opens settings.
 
 ### Selecting a region
 
@@ -209,6 +211,8 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
 | `linux/SettingsWindow.cs` | Linux Settings window |
+| `linux/HotkeyChord.cs` | Shortcut parsing, matching, and grab planning |
+| `linux/X11Hotkeys.cs` | X11 global shortcuts |
 
 ## License
 
