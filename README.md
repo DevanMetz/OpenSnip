@@ -209,6 +209,7 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
 | `linux/SettingsWindow.cs` | Linux Settings window |
+| `tests/OpenSnip.Tests` | Linux regression tests (capture, images, command line) |
 
 ## License
 
