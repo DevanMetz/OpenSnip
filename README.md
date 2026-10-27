@@ -145,7 +145,7 @@ There are no built-in global shortcuts on Linux; bind your own in GNOME Settings
 | `A` | All monitors |
 | `Enter` | Grab what's selected |
 | Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
-| `Esc` / right-click | Cancel |
+| `Esc` / right-click | Cancel the current drag, or cancel |
 
 ### Command line
 
