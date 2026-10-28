@@ -12,6 +12,8 @@ sealed class FramePump : IDisposable
 {
     readonly PixelRect _area;
     readonly EncodeSpec _spec;
+    readonly PortalScreenCast _portal;
+    Process _capture;
     readonly Func<long[]> _exclude;
     readonly object _gate = new();
     readonly StringBuilder _stderr = new();
@@ -25,9 +27,10 @@ sealed class FramePump : IDisposable
     volatile bool _failed;
     bool _disposed;
 
-    public FramePump(PixelRect area, EncodeSpec spec, Func<long[]> exclude)
+    public FramePump(PixelRect area, EncodeSpec spec, Func<long[]> exclude, PortalScreenCast portal = null)
     {
         _area = area;
+        _portal = portal;
         _spec = spec;
         _exclude = exclude;
     }
@@ -40,8 +43,11 @@ sealed class FramePump : IDisposable
         _run = true;
         _thread = new Thread(Run) { IsBackground = true, Name = "OpenSnip recording" };
         _thread.Start();
-        if (!_started.Wait(8000))
-            throw new InvalidOperationException(_error ?? "ffmpeg did not start.");
+        if (!_started.Wait(_portal == null ? 8000 : 15000))
+        {
+            Stop();
+            throw new InvalidOperationException(_error ?? "Screen capture did not start.");
+        }
         if (_failed)
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(_error) ? "ffmpeg did not start." : _error);
     }
@@ -60,6 +66,7 @@ sealed class FramePump : IDisposable
     public void Stop()
     {
         _run = false;
+        try { if (_capture != null && !_capture.HasExited) _capture.Kill(entireProcessTree: true); } catch { }
         if (_thread != null && !_thread.Join(6000))
         {
             try { _process?.Kill(entireProcessTree: true); } catch { }
@@ -75,6 +82,7 @@ sealed class FramePump : IDisposable
         try { Stop(); } catch { }
         _started.Dispose();
         try { _process?.Dispose(); } catch { }
+        try { _capture?.Dispose(); } catch { }
     }
 
     void Run()
@@ -82,7 +90,17 @@ sealed class FramePump : IDisposable
         X11FrameSource source = null;
         try
         {
-            source = new X11FrameSource(_area.X, _area.Y, _area.Width, _area.Height);
+            if (_portal == null) source = new X11FrameSource(_area.X, _area.Y, _area.Width, _area.Height);
+            else
+            {
+                _capture = _portal.StartFrames(_spec.Framerate);
+                _capture.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) return;
+                    lock (_stderr) { if (_stderr.Length > 8000) _stderr.Clear(); _stderr.AppendLine(e.Data); }
+                };
+                _capture.BeginErrorReadLine();
+            }
             var psi = new ProcessStartInfo("ffmpeg")
             {
                 UseShellExecute = false,
@@ -115,7 +133,7 @@ sealed class FramePump : IDisposable
             }
 
             var buffer = new byte[_area.Width * _area.Height * 4];
-            _started.Set();
+            if (_portal == null) _started.Set();
             long interval = Stopwatch.Frequency / Math.Max(1, _spec.Framerate);
             long next = Stopwatch.GetTimestamp();
             while (_run)
@@ -136,7 +154,21 @@ sealed class FramePump : IDisposable
                 try { exclude = _exclude?.Invoke() ?? exclude; }
                 catch { exclude = Array.Empty<long>(); }
 
-                if (!source.Grab(buffer, exclude, _spec.Cursor))
+                if (_portal != null)
+                {
+                    try
+                    {
+                        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        _capture.StandardOutput.BaseStream.ReadExactlyAsync(buffer, timeout.Token).AsTask().GetAwaiter().GetResult();
+                        _started.Set();
+                    }
+                    catch
+                    {
+                        if (_run) Fail(Stderr("Wayland screen capture stopped or timed out."));
+                        break;
+                    }
+                }
+                else if (!source.Grab(buffer, exclude, _spec.Cursor))
                 {
                     Fail("Screen capture failed.");
                     break;
@@ -168,6 +200,7 @@ sealed class FramePump : IDisposable
             try { _input?.Close(); } catch { }
             _started.Set();
             try { source?.Dispose(); } catch { }
+            try { if (_capture != null && !_capture.HasExited) _capture.Kill(entireProcessTree: true); } catch { }
         }
     }
 
