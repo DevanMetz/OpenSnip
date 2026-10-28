@@ -149,7 +149,7 @@ On Wayland, bind `opensnip --snip`, `opensnip --snip-delay`, or `opensnip --repe
 | `A` | All monitors |
 | `Enter` | Grab what's selected |
 | Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
-| `Esc` / right-click | Cancel |
+| `Esc` / right-click | Cancel the current drag, or cancel |
 
 On X11 the outline follows the window under the pointer. On Wayland a click grabs the monitor.
 

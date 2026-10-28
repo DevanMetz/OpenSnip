@@ -11,9 +11,11 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Region snip on a frozen screen | working | `linux/Capture.cs`, `linux/OverlayWindow.cs` |
 | Click grabs the monitor | working | `linux/OverlayWindow.cs` |
 | Click grabs the window under the cursor | partial. X11 only | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
-| `F` selects the monitor | partial. Sets the selection; Enter or the mouse confirms. Windows completes immediately. While recording, `F` completes the monitor. | `linux/OverlayWindow.cs` |
-| `A` selects all monitors | partial. Same as `F` for a snip. While recording, `A` completes the one monitor under the cursor. | `linux/OverlayWindow.cs` |
-| Enter confirms, arrows nudge, Esc and right-click cancel | working | `linux/OverlayWindow.cs` |
+| `F` captures the monitor under the cursor immediately | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| `A` captures all monitors immediately | working. Recording selects the monitor under the cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Enter confirms the selection or monitor; arrows nudge 1 px, or 10 with Shift | working. X11 warps the pointer; Wayland moves the overlay cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Esc and right-click cancel the drag first, then the snip | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Mixed-DPI placement | partial. The overlay uses one scale for the whole desktop. | `linux/OverlayWindow.cs` |
 | Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
 | Magnifier color | working | `linux/OverlayWindow.cs` |
 | X11 capture | working | `linux/Capture.cs` |
@@ -21,13 +23,14 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Copy PNG to the clipboard | working. `xclip` on X11, `wl-copy` on Wayland, then Avalonia. | `linux/ClipboardService.cs` |
 | Auto-save PNG or JPG | working | `linux/CapturedFrame.cs`, `linux/SettingsWindow.cs` |
 | Monthly folders | working | `src/Settings.cs` |
-| Preview thumbnail | working | `linux/ThumbnailWindow.cs` |
+| Preview thumbnail | working. It does not take focus and opens on the snipped monitor. | `linux/ThumbnailWindow.cs`, `linux/SnipGeometry.cs` |
 | Click the preview to annotate | working | `linux/ThumbnailWindow.cs` |
 | Drag the preview into another app | working | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
 | Annotation editor | working | `src/EditorForm.cs` |
 | Open the editor after a snip | working | `src/Settings.cs` |
 | Pin a snip, including from the clipboard | partial. Pin from clipboard or file; editor pin remains Windows-only | `src/SmallWindows.cs` |
-| Delayed snip | working | `linux/CountdownWindow.cs`, `linux/App.cs` |
+| Delayed snip | working. The countdown sits at the bottom of the monitor under the pointer, does not take focus, and closes before capture. X11 clicks pass through it; Wayland clicks do not. | `linux/CountdownWindow.cs`, `linux/X11ClickThrough.cs` |
+| Tray snip waits for the menu to close | working | `linux/App.cs`, `linux/SnipGesture.cs` |
 | Repeat the last region | working | `linux/App.cs` |
 
 ## Screen recording

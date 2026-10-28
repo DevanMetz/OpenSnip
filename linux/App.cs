@@ -25,6 +25,7 @@ sealed class App : Application
     readonly List<PinWindow> _pins = new();
     readonly List<EditorWindow> _editors = new();
     PixelRect? _lastRegion;
+    PixelRect? _lastScreen;
     bool _trayAvailable;
     bool _busy;
     bool _exiting;
@@ -130,12 +131,12 @@ sealed class App : Application
     void CreateTray()
     {
         var menu = new NativeMenu();
-        menu.Add(Item("Snip", () => StartSnip()));
+        menu.Add(Item("Snip", () => StartSnip(0, SnipTiming.MenuSettleMs)));
+        _delayItem = Item($"Snip after delay ({Settings.DelaySeconds}s)", () => StartSnip(Settings.DelaySeconds, SnipTiming.MenuSettleMs));
         _recordItem = Item("Record video", () => _ = DelayedRecord());
         menu.Add(_recordItem);
-        _delayItem = Item($"Snip after delay ({Settings.DelaySeconds}s)", () => StartSnip(Settings.DelaySeconds));
         menu.Add(_delayItem);
-        menu.Add(Item("Repeat last region", RepeatLast));
+        menu.Add(Item("Repeat last region", () => RepeatLast(SnipTiming.MenuSettleMs)));
         menu.Add(new NativeMenuItemSeparator());
         menu.Add(Item("Pin image from clipboard", () => _ = PinAsync(null)));
         menu.Add(Item("Open image in editor…", () => _ = OpenImageAsync()));
@@ -155,7 +156,7 @@ sealed class App : Application
         _tray.Clicked += (_, _) =>
         {
             if (_recording != null) ToggleRecording();
-            else StartSnip();
+            else StartSnip(0, SnipTiming.MenuSettleMs);
         };
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
         UpdateTrayText();
@@ -480,7 +481,7 @@ sealed class App : Application
             ShowThumbnail(preview, path, Math.Max(Settings.PreviewSeconds, 8), play: true);
     }
 
-    public async void StartSnip(int delaySeconds = 0)
+    public async void StartSnip(int delaySeconds = 0, int settleMs = 0)
     {
         if (_recording != null || _busy) return;
         _busy = true;
@@ -488,7 +489,7 @@ sealed class App : Application
         {
             bool hadThumbnail = _thumbnail != null;
             CloseThumbnail();
-            if (hadThumbnail) await Task.Delay(100);
+            await SettleAsync(settleMs, hadThumbnail);
             if (delaySeconds > 0) await CountdownWindow.RunAsync(delaySeconds);
 
             var frame = await CaptureService.CaptureAsync();
@@ -497,8 +498,9 @@ sealed class App : Application
             if (region is not { } selected) return;
 
             _lastRegion = selected;
+            _lastScreen = SnipGeometry.ToScreen(selected, overlay.VirtualBounds, frame.Width, frame.Height);
             var cropped = frame.Crop(selected.X, selected.Y, selected.Width, selected.Height);
-            await DeliverAsync(cropped);
+            await DeliverAsync(cropped, _lastScreen.Value);
         }
         catch (CaptureException ex)
         {
@@ -516,12 +518,12 @@ sealed class App : Application
         }
     }
 
-    public async void RepeatLast()
+    public async void RepeatLast(int settleMs = 0)
     {
         if (_recording != null || _busy) return;
         if (_lastRegion is not { } region)
         {
-            StartSnip();
+            StartSnip(0, settleMs);
             return;
         }
 
@@ -531,7 +533,7 @@ sealed class App : Application
         {
             bool hadThumbnail = _thumbnail != null;
             CloseThumbnail();
-            if (hadThumbnail) await Task.Delay(100);
+            await SettleAsync(settleMs, hadThumbnail);
             var frame = await CaptureService.CaptureAsync();
             if (region.X < 0 || region.Y < 0 || region.Right > frame.Width || region.Bottom > frame.Height)
             {
@@ -539,7 +541,8 @@ sealed class App : Application
                 return;
             }
             var cropped = frame.Crop(region.X, region.Y, region.Width, region.Height);
-            await DeliverAsync(cropped);
+            var screen = _lastScreen ?? SnipGeometry.ToScreen(region, new PixelRect(0, 0, frame.Width, frame.Height), frame.Width, frame.Height);
+            await DeliverAsync(cropped, screen);
         }
         catch (CaptureException ex)
         {
@@ -558,6 +561,14 @@ sealed class App : Application
         }
     }
 
+    static async Task SettleAsync(int settleMs, bool hadThumbnail)
+    {
+        // The tray menu and our own preview are still on screen for a moment.
+        int wait = settleMs;
+        if (hadThumbnail) wait = Math.Max(wait, SnipTiming.ThumbnailClearMs);
+        if (wait > 0) await Task.Delay(wait);
+    }
+
     static PixelRect[] WindowsFor(CapturedFrame frame)
     {
         // Rectangles are root-window pixels, so they only match a full-root capture.
@@ -566,7 +577,7 @@ sealed class App : Application
         return snap.Windows;
     }
 
-    async Task DeliverAsync(CapturedFrame frame)
+    async Task DeliverAsync(CapturedFrame frame, PixelRect screenRect)
     {
         bool copied = false;
         if (Settings.CopyToClipboard)
@@ -604,11 +615,11 @@ sealed class App : Application
             catch (Exception ex)
             {
                 Log.Error(ex);
-                ShowThumbnail(frame, saved);
+                ShowThumbnail(frame, saved, anchor: screenRect);
             }
         }
         else if (Settings.ShowThumbnail || (!copied && saved == null))
-            ShowThumbnail(frame, saved);
+            ShowThumbnail(frame, saved, anchor: screenRect);
     }
 
     public void OpenEditor(CapturedFrame frame)
@@ -708,10 +719,10 @@ sealed class App : Application
         }
     }
 
-    void ShowThumbnail(CapturedFrame frame, string path, int? seconds = null, bool play = false)
+    void ShowThumbnail(CapturedFrame frame, string path, int? seconds = null, bool play = false, PixelRect? anchor = null)
     {
         CloseThumbnail();
-        var thumbnail = new ThumbnailWindow(frame, path, seconds ?? Settings.PreviewSeconds, play);
+        var thumbnail = new ThumbnailWindow(frame, path, seconds ?? Settings.PreviewSeconds, play, anchor);
         thumbnail.Closed += (_, _) =>
         {
             if (ReferenceEquals(_thumbnail, thumbnail)) _thumbnail = null;

@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Shapes = Avalonia.Controls.Shapes;
@@ -12,6 +13,7 @@ namespace OpenSnip;
 
 sealed class ThumbnailWindow : Window
 {
+    readonly PixelRect? _anchor;
     readonly CapturedFrame _frame;
     readonly DispatcherTimer _timer;
     string _path;
@@ -19,16 +21,18 @@ sealed class ThumbnailWindow : Window
     bool _pressed;
     bool _dragged;
 
-    public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds, bool play = false)
+    public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds, bool play = false, PixelRect? anchor = null)
     {
         _frame = frame;
         _path = savedPath;
+        _anchor = anchor;
         Title = "OpenSnip";
         Icon = IconLoader.Icon;
         SystemDecorations = SystemDecorations.None;
         CanResize = false;
         Topmost = true;
         ShowInTaskbar = false;
+        ShowActivated = false;
         WindowStartupLocation = WindowStartupLocation.Manual;
 
         double maxWidth = 300;
@@ -115,15 +119,26 @@ sealed class ThumbnailWindow : Window
 
     void PlaceBottomRight()
     {
-        var screen = Screens.Primary
-                     ?? Screens.All.FirstOrDefault(candidate => candidate.IsPrimary)
-                     ?? Screens.All.FirstOrDefault();
+        var screen = ScreenForAnchor();
         if (screen == null) return;
         var area = screen.WorkingArea;
         double scale = screen.Scaling <= 0 ? 1 : screen.Scaling;
         Position = new PixelPoint(
             (int)(area.Right - Width * scale - 16 * scale),
             (int)(area.Bottom - Height * scale - 16 * scale));
+    }
+
+    Screen ScreenForAnchor()
+    {
+        var screens = Screens?.All;
+        if (screens == null || screens.Count == 0) return Screens?.Primary;
+        if (_anchor is not { } anchor) return Screens.Primary ?? screens[0];
+
+        var bounds = new PixelRect[screens.Count];
+        for (int i = 0; i < screens.Count; i++) bounds[i] = screens[i].Bounds;
+        int index = SnipGeometry.BestScreen(anchor, bounds);
+        if (index < 0 || index >= screens.Count) return Screens.Primary ?? screens[0];
+        return screens[index];
     }
 
     void OnPressed(object sender, PointerPressedEventArgs e)
