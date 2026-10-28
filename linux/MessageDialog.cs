@@ -12,12 +12,12 @@ static class MessageDialog
         await ShowAsync(owner, message, confirm: false);
     }
 
-    public static async Task<bool> ConfirmAsync(Window owner, string message)
+    public static async Task<bool> ConfirmAsync(Window owner, string message, string accept = "Reset")
     {
-        return await ShowAsync(owner, message, confirm: true);
+        return await ShowAsync(owner, message, confirm: true, accept);
     }
 
-    static async Task<bool> ShowAsync(Window owner, string message, bool confirm)
+    static async Task<bool> ShowAsync(Window owner, string message, bool confirm, string accept = "OK")
     {
         var result = false;
         var window = new Window
@@ -52,7 +52,7 @@ static class MessageDialog
             cancel.Click += (_, _) => window.Close();
             buttons.Children.Add(cancel);
         }
-        var ok = new Button { Content = confirm ? "Reset" : "OK" };
+        var ok = new Button { Content = confirm ? accept : "OK" };
         ok.Click += (_, _) => { result = true; window.Close(); };
         buttons.Children.Add(ok);
 

@@ -9,55 +9,65 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Feature | Linux | Files |
 |---|---|---|
 | Region snip on a frozen screen | working | `linux/Capture.cs`, `linux/OverlayWindow.cs` |
-| Click grabs the monitor under the cursor | working | `linux/OverlayWindow.cs` |
-| Click grabs the window under the cursor | missing | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
-| `F` captures that monitor now | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| `A` captures every monitor now | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| Enter confirms the selection, or the monitor when nothing is selected | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| Arrow keys nudge 1 px, Shift nudges 10 | partial. On X11 the pointer moves. On Wayland only the overlay cursor moves, because a client cannot warp the Wayland pointer. | `linux/OverlayWindow.cs`, `linux/X11Cursor.cs` |
+| Click grabs the monitor | working | `linux/OverlayWindow.cs` |
+| Click grabs the window under the cursor | partial. X11 only | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
+| `F` captures the monitor under the cursor immediately | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| `A` captures all monitors immediately | working. Recording selects the monitor under the cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Enter confirms the selection or monitor; arrows nudge 1 px, or 10 with Shift | working. X11 warps the pointer; Wayland moves the overlay cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
 | Esc and right-click cancel the drag first, then the snip | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| Magnifier with coordinates | working. It opens on the X11 pointer before the mouse moves. | `linux/OverlayWindow.cs` |
-| Magnifier color | missing | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
-| Mixed-DPI placement | partial. The overlay uses one scale for the whole desktop. Windows keeps the overlay in physical pixels. | `linux/OverlayWindow.cs` |
-| X11 capture | partial. The import is `libX11`, which looks for `libX11.so`. Desktops ship `libX11.so.6`. | `linux/Capture.cs` |
+| Mixed-DPI placement | partial. The overlay uses one scale for the whole desktop. | `linux/OverlayWindow.cs` |
+| Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
+| Magnifier color | working | `linux/OverlayWindow.cs` |
+| X11 capture | working | `linux/Capture.cs` |
 | Wayland capture (portal screenshot) | working | `linux/Capture.cs`, `linux/DBus.cs` |
 | Copy PNG to the clipboard | working. `xclip` on X11, `wl-copy` on Wayland, then Avalonia. | `linux/ClipboardService.cs` |
 | Auto-save PNG or JPG | working | `linux/CapturedFrame.cs`, `linux/SettingsWindow.cs` |
 | Monthly folders | working | `src/Settings.cs` |
-| Preview thumbnail | working. It does not take focus, and it opens on the monitor that was snipped. | `linux/ThumbnailWindow.cs`, `linux/SnipGeometry.cs` |
-| Click the preview to annotate | partial. Click opens the file with `xdg-open`. | `linux/ThumbnailWindow.cs` |
-| Drag the preview into another app | missing | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
-| Annotation editor | missing | `src/EditorForm.cs` |
-| Open the editor after a snip | missing. The shared setting exists. Linux follows the preview checkbox. | `src/Settings.cs`, `linux/App.cs`, `linux/SettingsWindow.cs` |
-| Pin a snip, including from the clipboard | missing | `src/SmallWindows.cs` |
-| Delayed snip | working. The countdown sits at the bottom of the monitor under the pointer, does not take focus, and closes before the shot. On X11 clicks pass through it. On Wayland they do not. | `linux/CountdownWindow.cs`, `linux/X11ClickThrough.cs` |
-| Tray snip waits so the menu is not in the shot | working | `linux/App.cs`, `linux/SnipGesture.cs` |
+| Preview thumbnail | working. It does not take focus and opens on the snipped monitor. | `linux/ThumbnailWindow.cs`, `linux/SnipGeometry.cs` |
+| Click the preview to annotate | working | `linux/ThumbnailWindow.cs` |
+| Drag the preview into another app | working | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
+| Annotation editor | working | `src/EditorForm.cs` |
+| Open the editor after a snip | working | `src/Settings.cs` |
+| Pin a snip, including from the clipboard | partial. Pin from clipboard or file; editor pin remains Windows-only | `src/SmallWindows.cs` |
+| Delayed snip | working. The countdown sits at the bottom of the monitor under the pointer, does not take focus, and closes before capture. X11 clicks pass through it; Wayland clicks do not. | `linux/CountdownWindow.cs`, `linux/X11ClickThrough.cs` |
+| Tray snip waits for the menu to close | working | `linux/App.cs`, `linux/SnipGesture.cs` |
 | Repeat the last region | working | `linux/App.cs` |
 
 ## Screen recording
 
 | Feature | Linux | Files |
 |---|---|---|
-| Record a region to MP4 | missing | `src/Recording.cs` |
-| Record the window under the cursor | missing | `src/CaptureOverlay.cs` |
-| 3-2-1 countdown, outline, and control bar | missing | `src/Recording.cs` |
-| System audio and microphone | missing | `src/Recording.cs`, `src/SettingsForm.cs` |
-| 30 or 60 fps, quality, cursor | missing | `src/Settings.cs` |
-| Copy the MP4 and show a preview | missing | `src/TrayApp.cs`, `src/SmallWindows.cs` |
-| `Win+Shift+R` | missing | `src/TrayApp.cs` |
+| Record a region to MP4 | working on X11. Tray **Record video** and `opensnip --record`. | `linux/App.cs`, `linux/RecordingSession.cs`, `linux/FramePump.cs` |
+| Wayland recording | missing. The portal ScreenCast API is not wired. The app reports that recording needs an X11 session. | `linux/App.cs` |
+| Record the window under the cursor | working on X11. | `linux/OverlayWindow.cs` |
+| One monitor, even dimensions, 16 px minimum | working | `linux/RecordGeometry.cs` |
+| 3-2-1 countdown | working | `linux/RecordingChrome.cs` |
+| Red outline | working | `linux/RecordingChrome.cs` |
+| Pause, microphone mute, stop, discard | working | `linux/RecordingChrome.cs`, `linux/RecordingSession.cs` |
+| Outline and bar left out of the video | working on X11. Those rectangles are rebuilt from the wallpaper pixmap and the windows underneath. | `linux/X11FrameSource.cs` |
+| System audio | partial. PulseAudio or PipeWire monitor source through `pactl` and `ffmpeg`. Video only when `pactl` or a monitor source is missing. | `linux/AudioDevices.cs`, `linux/FfmpegPlan.cs` |
+| Microphone, off until enabled | partial. Same `pactl` dependency. Mute keeps a silent stream so paused segments stay compatible. | `linux/AudioDevices.cs` |
+| Hardware H.264 | partial. Software libx264 (CRF 18 high, 28 standard). VAAPI and NVENC are not selected. | `linux/FfmpegPlan.cs` |
+| 30 or 60 fps | working | `linux/FfmpegPlan.cs`, `linux/SettingsWindow.cs` |
+| Mouse cursor in the video | working. XFixes cursor image. | `linux/X11FrameSource.cs` |
+| Copy the MP4 | partial. `text/uri-list` through `xclip` or `wl-copy`. | `linux/ClipboardService.cs`, `linux/FileUri.cs` |
+| Preview still that plays on click | working. Play badge; click opens the file. The preview stays at least 8 seconds. | `linux/ThumbnailWindow.cs`, `linux/App.cs` |
+| Drag the video preview out | missing | `linux/ThumbnailWindow.cs` |
+| `Win+Shift+R` | missing. The tray item and `opensnip --record` start and stop a recording. A global key grab is not built in. | `linux/App.cs`, `linux/Cli.cs` |
+| Tray click stops a recording, otherwise snips | working | `linux/App.cs` |
+| Snip blocked while recording | working | `linux/App.cs` |
+| Open the recordings folder | working | `linux/App.cs` |
+| Save under Videos/OpenSnip as `Recording yyyy-MM-dd HH.mm.ss.mp4` | working | `linux/FfmpegPlan.cs`, `linux/SettingsDefaults.cs` |
 
 ## Shortcuts and settings
 
 | Feature | Linux | Files |
 |---|---|---|
-| `Win+Shift+S`, delay, repeat, Print Screen | missing. Bind `opensnip --snip`, `--snip-delay`, and `--repeat` in the desktop. | `linux/Cli.cs`, `linux/SettingsWindow.cs` |
-| Settings pages for capture, saving, shortcuts, general | partial. There is no Recording page, and Shortcuts lists commands instead of recording a key. | `linux/SettingsWindow.cs` |
-| Copy, preview, magnifier, delay | working | `linux/SettingsWindow.cs` |
-| Auto-save, folder, PNG or JPG, monthly folders | working | `linux/SettingsWindow.cs` |
-| Reset defaults | working | `linux/SettingsWindow.cs` |
+| `Win+Shift+S`, delay, repeat, Print Screen | working on X11. Bind commands in the desktop on Wayland. | `linux/Cli.cs`, `linux/SettingsWindow.cs` |
+| Settings pages for capture, saving, recording, shortcuts, general | working. Shortcuts supports X11 key bindings and lists commands on Wayland. | `linux/SettingsWindow.cs` |
+| Recording options: system sound, microphone, device, frame rate, quality, cursor, countdown, copy file | working | `linux/SettingsWindow.cs` |
+| Reset defaults, including the recording options and video folder | working | `linux/SettingsWindow.cs`, `linux/SettingsDefaults.cs` |
 | Start on login | working. XDG autostart. | `linux/Autostart.cs` |
-| First-run tray balloon | missing. Windows shows a one-time hint. Linux does not add it. | `src/TrayApp.cs` |
-| Tray tooltip names the snip shortcut | missing. The tooltip is "OpenSnip". | `linux/App.cs` |
-| Diagnostics | working. Capture backends, clipboard tools, portal, and tray host. | `linux/Diagnostics.cs` |
-| Second launch forwards snip, delay, repeat, and settings | working | `linux/SingleInstance.cs` |
-| `--capture` and `--diagnostics` | working | `linux/Cli.cs`, `linux/CaptureCli.cs` |
+| First-run tray balloon | missing. The tray menu is available as soon as the icon is. | `src/TrayApp.cs`, `linux/App.cs` |
+| Diagnostics include capture, clipboard, ffmpeg, and audio devices | working | `linux/Diagnostics.cs` |
+| Second launch forwards snip, delay, repeat, record, and settings | working | `linux/SingleInstance.cs` |
