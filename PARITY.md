@@ -69,6 +69,6 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Recording options: system sound, microphone, device, frame rate, quality, cursor, countdown, copy file | working | `linux/SettingsWindow.cs` |
 | Reset defaults, including the recording options and video folder | working | `linux/SettingsWindow.cs`, `linux/SettingsDefaults.cs` |
 | Start on login | working. XDG autostart. | `linux/Autostart.cs` |
-| First-run tray balloon | missing. The tray menu is available as soon as the icon is. | `src/TrayApp.cs`, `linux/App.cs` |
+| First-run tray balloon | done. Linux shows a first-launch desktop notification with the X11 shortcut or Wayland bind command; its default action snips when supported. Silently skipped without a notification server. | `src/TrayApp.cs`, `linux/App.cs`, `linux/Notifications.cs` |
 | Diagnostics include capture, clipboard, ffmpeg, and audio devices | working | `linux/Diagnostics.cs` |
 | Second launch forwards snip, delay, repeat, record, and settings | working | `linux/SingleInstance.cs` |
