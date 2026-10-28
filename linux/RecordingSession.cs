@@ -10,6 +10,7 @@ sealed class RecordingSession
     public event Action Ended;
 
     readonly Settings _settings;
+    readonly PortalScreenCast _portal;
     readonly string _system;
     readonly string _mic;
     readonly string _output;
@@ -31,9 +32,10 @@ sealed class RecordingSession
     public bool MicOn => _micOn;
     public TimeSpan Elapsed => _clock.Elapsed;
 
-    public RecordingSession(PixelRect area, Settings settings, string systemSource, string micSource)
+    public RecordingSession(PixelRect area, Settings settings, string systemSource, string micSource, PortalScreenCast portal = null)
     {
         Area = area;
+        _portal = portal;
         _settings = settings;
         _system = systemSource;
         _mic = micSource;
@@ -128,8 +130,9 @@ sealed class RecordingSession
                 Cursor = _settings.RecordCursor,
                 Output = _current,
             };
-            var pump = new FramePump(Area, spec, () => _chrome?.WindowIds() ?? Array.Empty<long>());
-            pump.Start();
+            var pump = new FramePump(Area, spec, () => _chrome?.WindowIds() ?? Array.Empty<long>(), _portal);
+            try { pump.Start(); }
+            catch { pump.Dispose(); throw; }
             _pump = pump;
             if (!_clock.IsRunning) _clock.Start();
             _chrome?.Refresh();
@@ -276,6 +279,7 @@ sealed class RecordingSession
     {
         if (_ended) return;
         _ended = true;
+        _portal?.Dispose();
         DeleteTemp();
         Ended?.Invoke();
     }

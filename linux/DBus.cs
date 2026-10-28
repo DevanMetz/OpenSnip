@@ -5,7 +5,7 @@ namespace OpenSnip;
 
 sealed record PortalResponse(string Path, uint Code, Dictionary<string, VariantValue> Results);
 
-static class DBus
+static partial class DBus
 {
     static string SessionAddress
     {

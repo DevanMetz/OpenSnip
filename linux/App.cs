@@ -406,12 +406,13 @@ sealed class App : Application
             await ShowErrorAsync("Screen recording needs ffmpeg.");
             return;
         }
-        if (PlatformInfo.IsWayland || !PlatformInfo.HasDisplay)
+        if (!PlatformInfo.IsWayland && !PlatformInfo.HasDisplay)
         {
-            await ShowErrorAsync("Screen recording needs an X11 session.");
+            await ShowErrorAsync("Screen recording needs a desktop session.");
             return;
         }
 
+        PortalScreenCast portal = null;
         _busy = true;
         try
         {
@@ -423,7 +424,9 @@ sealed class App : Application
             var region = await OverlayWindow.SelectAsync(frame, Settings, WindowsFor(frame), record: true);
             if (region is not { } selected) return;
 
-            var monitors = X11Monitors.Query();
+            var layouts = OverlaySession.ReadLayouts(frame);
+            IReadOnlyList<PixelRect> monitors = PlatformInfo.IsWayland
+                ? layouts.Select(m => m.Bounds).ToArray() : X11Monitors.Query();
             if (monitors.Count == 0)
                 monitors = new[] { new PixelRect(0, 0, frame.Width, frame.Height) };
             if (!RecordGeometry.TryNormalize(selected, monitors, out var area))
@@ -432,10 +435,16 @@ sealed class App : Application
                 return;
             }
 
+            if (PlatformInfo.IsWayland)
+            {
+                portal = await PortalScreenCast.OpenAsync(Settings.RecordCursor);
+                portal.SetRegion(area, layouts);
+            }
             var audio = await Task.Run(AudioDevices.Discover);
             string system = Settings.RecordSystemAudio ? audio.SystemSource : null;
             string mic = Settings.RecordMicrophone ? audio.ResolveMicrophone(Settings.MicrophoneDevice) : null;
-            var session = new RecordingSession(area, Settings, system, mic);
+            var session = new RecordingSession(area, Settings, system, mic, portal);
+            portal = null;
             session.Saved += (path, preview) => Dispatcher.UIThread.Post(() => _ = OnRecordingSavedAsync(session, path, preview));
             session.Failed += message => Dispatcher.UIThread.Post(() =>
             {
@@ -470,6 +479,7 @@ sealed class App : Application
         }
         finally
         {
+            portal?.Dispose();
             _busy = false;
             QuitIfIdle();
         }
