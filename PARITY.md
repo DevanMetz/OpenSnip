@@ -39,18 +39,18 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Feature | Linux | Files |
 |---|---|---|
 | Record a region to MP4 | working on X11. Tray **Record video** and `opensnip --record`. | `linux/App.cs`, `linux/RecordingSession.cs`, `linux/FramePump.cs` |
-| Wayland recording | missing. The portal ScreenCast API is not wired. The app reports that recording needs an X11 session. | `linux/App.cs` |
+| Wayland recording | partial. ScreenCast portal and GStreamer PipeWire plugin feed cropped frames to ffmpeg; share the selected monitor. Restore tokens persist when supported. Pause, mute, audio and countdown use the existing pipeline. Requires GStreamer tools, PipeWire, video conversion/crop/rate plugins. Monitor geometry must be identifiable; mixed-DPI layouts may be rejected. | `linux/PortalScreenCast.cs`, `linux/FramePump.cs`, `linux/RecordingSession.cs`, `linux/App.cs` |
 | Record the window under the cursor | working on X11. | `linux/OverlayWindow.cs` |
 | One monitor, even dimensions, 16 px minimum | working | `linux/RecordGeometry.cs` |
 | 3-2-1 countdown | working | `linux/RecordingChrome.cs` |
-| Red outline | working | `linux/RecordingChrome.cs` |
+| Red outline | working on X11; Wayland uses Xwayland outlines when available. | `linux/RecordingChrome.cs` |
 | Pause, microphone mute, stop, discard | working | `linux/RecordingChrome.cs`, `linux/RecordingSession.cs` |
-| Outline and bar left out of the video | working on X11. Those rectangles are rebuilt from the wallpaper pixmap and the windows underneath. | `linux/X11FrameSource.cs` |
+| Outline and bar left out of the video | working on X11. Those rectangles are rebuilt from the wallpaper pixmap and the windows underneath. Wayland cannot exclude the outline or controls; controls may appear for full-monitor recordings. | `linux/X11FrameSource.cs` |
 | System audio | partial. PulseAudio or PipeWire monitor source through `pactl` and `ffmpeg`. Video only when `pactl` or a monitor source is missing. | `linux/AudioDevices.cs`, `linux/FfmpegPlan.cs` |
 | Microphone, off until enabled | partial. Same `pactl` dependency. Mute keeps a silent stream so paused segments stay compatible. | `linux/AudioDevices.cs` |
 | Hardware H.264 | partial. Software libx264 (CRF 18 high, 28 standard). VAAPI and NVENC are not selected. | `linux/FfmpegPlan.cs` |
 | 30 or 60 fps | working | `linux/FfmpegPlan.cs`, `linux/SettingsWindow.cs` |
-| Mouse cursor in the video | working. XFixes cursor image. | `linux/X11FrameSource.cs` |
+| Mouse cursor in the video | working on X11 (XFixes); Wayland requests an embedded cursor when the portal supports it. | `linux/X11FrameSource.cs`, `linux/PortalScreenCast.cs` |
 | Copy the MP4 | partial. `text/uri-list` through `xclip` or `wl-copy`. | `linux/ClipboardService.cs`, `linux/FileUri.cs` |
 | Preview still that plays on click | working. Play badge; click opens the file. The preview stays at least 8 seconds. | `linux/ThumbnailWindow.cs`, `linux/App.cs` |
 | Drag the video preview out | implemented. MP4 storage item and `text/uri-list` for native drops; desktop interoperability needs manual verification on X11/Wayland. | `linux/ThumbnailWindow.cs`, `linux/FileUri.cs` |
