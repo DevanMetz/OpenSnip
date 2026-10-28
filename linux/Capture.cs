@@ -144,12 +144,25 @@ sealed class ExternalCaptureBackend : ICaptureBackend
 
 sealed class X11CaptureBackend : ICaptureBackend
 {
-    const string X11 = "libX11";
+    const string X11 = X11Library.ImportName;
     const int ZPixmap = 2;
     const ulong AllPlanes = ~0UL;
 
     public string Name => "libX11 (native)";
-    public bool IsAvailable => PlatformInfo.HasDisplay && !PlatformInfo.IsWayland && PlatformInfo.LibX11Available;
+    public bool IsAvailable => PlatformInfo.HasDisplay && !PlatformInfo.IsWayland && X11Library.Available;
+
+    /// <summary>Calls into libX11. False when the import still cannot see the installed library.</summary>
+    internal static bool NativeLibraryLoads()
+    {
+        try
+        {
+            var display = XOpenDisplay(":99");
+            if (display != IntPtr.Zero) XCloseDisplay(display);
+            return true;
+        }
+        catch (DllNotFoundException) { return false; }
+        catch (EntryPointNotFoundException) { return false; }
+    }
 
     public Task<CapturedFrame> CaptureAsync() => Task.Run(Capture);
 
@@ -167,7 +180,23 @@ sealed class X11CaptureBackend : ICaptureBackend
                 throw new CaptureException("Cannot read the X11 screen size.");
             if (width == 0 || height == 0) throw new CaptureException("The X11 screen is empty.");
 
-            image = XGetImage(display, root, 0, 0, width, height, AllPlanes, ZPixmap);
+            var monitors = X11Randr.Query(display, root);
+            var region = CaptureRegion.From(monitors, (int)width, (int)height);
+            if (region.Width <= 0 || region.Height <= 0)
+                region = new CaptureRegion(0, 0, (int)width, (int)height);
+
+            image = Grab(display, root, region);
+            var rootRegion = new CaptureRegion(0, 0, (int)width, (int)height);
+            if (!ImageMatches(image, region) && !SameRegion(region, rootRegion))
+            {
+                if (image != IntPtr.Zero)
+                {
+                    try { XDestroyImage(image); } catch { }
+                    image = IntPtr.Zero;
+                }
+                region = rootRegion;
+                image = Grab(display, root, region);
+            }
             if (image == IntPtr.Zero) throw new CaptureException("XGetImage failed.");
 
             var header = Marshal.PtrToStructure<XImageHeader>(image);
@@ -220,7 +249,10 @@ sealed class X11CaptureBackend : ICaptureBackend
                 }
             }
 
-            return new CapturedFrame(w, h, output);
+            var frame = new CapturedFrame(w, h, output);
+            if (header.width == region.Width && header.height == region.Height)
+                frame.NoteOrigin(region.X, region.Y);
+            return frame;
         }
         catch (DllNotFoundException ex) { throw new CaptureException("libX11 is not available.", ex); }
         catch (EntryPointNotFoundException ex) { throw new CaptureException("libX11 is missing a required function.", ex); }
@@ -230,6 +262,19 @@ sealed class X11CaptureBackend : ICaptureBackend
             if (display != IntPtr.Zero) { try { XCloseDisplay(display); } catch { } }
         }
     }
+
+    static IntPtr Grab(IntPtr display, IntPtr root, CaptureRegion region) =>
+        XGetImage(display, root, region.X, region.Y, (uint)region.Width, (uint)region.Height, AllPlanes, ZPixmap);
+
+    static bool ImageMatches(IntPtr image, CaptureRegion region)
+    {
+        if (image == IntPtr.Zero) return false;
+        var header = Marshal.PtrToStructure<XImageHeader>(image);
+        return header.width == region.Width && header.height == region.Height && header.data != IntPtr.Zero;
+    }
+
+    static bool SameRegion(CaptureRegion a, CaptureRegion b) =>
+        a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height;
 
     static byte Extract(uint pixel, ulong mask)
     {

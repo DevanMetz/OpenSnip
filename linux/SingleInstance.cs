@@ -4,15 +4,58 @@ using System.Text;
 
 namespace OpenSnip;
 
+readonly record struct RemoteCommand(LaunchAction Action, string Argument)
+{
+    public static RemoteCommand Parse(string line)
+    {
+        line = (line ?? "").Trim();
+        if (line.StartsWith("edit ", StringComparison.Ordinal) || line.StartsWith("edit\t", StringComparison.Ordinal))
+            return new RemoteCommand(LaunchAction.Edit, line[5..].Trim());
+        if (line.StartsWith("pin ", StringComparison.Ordinal) || line.StartsWith("pin\t", StringComparison.Ordinal))
+        {
+            string path = line[4..].Trim();
+            return new RemoteCommand(LaunchAction.Pin, path.Length == 0 ? null : path);
+        }
+        return new RemoteCommand(ParseAction(line), null);
+    }
+
+    public static string Format(LaunchAction action, string argument)
+    {
+        if (argument != null && (argument.Contains('\n') || argument.Contains('\r')))
+            throw new ArgumentException("Invalid path");
+        if (action == LaunchAction.Edit) return "edit " + (argument ?? "");
+        if (action == LaunchAction.Pin)
+            return string.IsNullOrEmpty(argument) ? "pin" : "pin " + argument;
+        return action switch
+        {
+            LaunchAction.SnipDelay => "snip-delay",
+            LaunchAction.Repeat => "repeat",
+            LaunchAction.Settings => "settings",
+            LaunchAction.Record => "record",
+            _ => "snip",
+        };
+    }
+
+    static LaunchAction ParseAction(string line) => line switch
+    {
+        "snip-delay" => LaunchAction.SnipDelay,
+        "repeat" => LaunchAction.Repeat,
+        "settings" => LaunchAction.Settings,
+        "record" => LaunchAction.Record,
+        "pin" => LaunchAction.Pin,
+        _ => LaunchAction.Snip,
+    };
+}
+
 /// <summary>One running OpenSnip per user, reached through a Unix domain socket.</summary>
 static class SingleInstance
 {
     static Socket _listener;
     static string _socketPath;
     static CancellationTokenSource _cts;
-    static readonly ConcurrentQueue<LaunchAction> Pending = new();
+    static readonly ConcurrentQueue<RemoteCommand> Pending = new();
     static readonly object HandlerLock = new();
-    static Action<LaunchAction> _handler;
+    static Action<RemoteCommand> _handler;
 
     public static bool IsFirst { get; private set; }
     public static string SocketPath => _socketPath;
@@ -111,16 +154,26 @@ static class SingleInstance
         }
     }
 
-    public static bool Send(LaunchAction action, out string error)
+    public static bool Send(LaunchAction action, out string error) => Send(action, null, out error);
+
+    public static bool Send(LaunchAction action, string argument, out string error)
     {
         error = null;
+        string line;
+        try { line = RemoteCommand.Format(action, argument); }
+        catch (ArgumentException)
+        {
+            error = "Invalid path";
+            return false;
+        }
+
         string path = _socketPath ?? BuildSocketPath();
         try
         {
             using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             using var cts = new CancellationTokenSource(1500);
             socket.ConnectAsync(new UnixDomainSocketEndPoint(path), cts.Token).AsTask().GetAwaiter().GetResult();
-            var payload = Encoding.UTF8.GetBytes(CommandName(action) + "\n");
+            var payload = Encoding.UTF8.GetBytes(line + "\n");
             socket.Send(payload);
             try { socket.Shutdown(SocketShutdown.Send); } catch { }
             return true;
@@ -131,22 +184,6 @@ static class SingleInstance
             return false;
         }
     }
-
-    static string CommandName(LaunchAction action) => action switch
-    {
-        LaunchAction.SnipDelay => "snip-delay",
-        LaunchAction.Repeat => "repeat",
-        LaunchAction.Settings => "settings",
-        _ => "snip",
-    };
-
-    static LaunchAction ParseCommand(string line) => line.Trim() switch
-    {
-        "snip-delay" => LaunchAction.SnipDelay,
-        "repeat" => LaunchAction.Repeat,
-        "settings" => LaunchAction.Settings,
-        _ => LaunchAction.Snip,
-    };
 
     static async Task AcceptLoopAsync(CancellationToken token)
     {
@@ -199,30 +236,30 @@ static class SingleInstance
         // Forwarding is fire-and-forget: the client closes as soon as the command
         // is written, so don't send a reply (a reply would just cause a broken
         // pipe when the client has already gone away).
-        Dispatch(ParseCommand(line));
+        Dispatch(RemoteCommand.Parse(line));
     }
 
-    static void Dispatch(LaunchAction action)
+    static void Dispatch(RemoteCommand command)
     {
-        Action<LaunchAction> handler;
+        Action<RemoteCommand> handler;
         lock (HandlerLock)
         {
             handler = _handler;
             if (handler == null)
             {
-                Pending.Enqueue(action);
+                Pending.Enqueue(command);
                 return;
             }
         }
-        try { handler(action); } catch (Exception ex) { Log.Error(ex); }
+        try { handler(command); } catch (Exception ex) { Log.Error(ex); }
     }
 
-    public static void SetHandler(Action<LaunchAction> handler)
+    public static void SetHandler(Action<RemoteCommand> handler)
     {
         lock (HandlerLock)
         {
             _handler = handler;
-            while (Pending.TryDequeue(out var action)) handler(action);
+            while (Pending.TryDequeue(out var command)) handler(command);
         }
     }
 

@@ -16,6 +16,8 @@ static class AppTheme
     public static readonly Color AccentHoverColor = Color.Parse("#8D73FF");
     public static readonly Color BorderColor = Color.Parse("#3A3A46");
     public static readonly Color NavSelectedColor = Color.Parse("#483A8C");
+    public static readonly Color RecordColor = Color.Parse("#F04438");
+    public static readonly Color GoodColor = Color.Parse("#78DC8C");
 
     public static readonly IBrush Back = new SolidColorBrush(BackColor);
     public static readonly IBrush Panel = new SolidColorBrush(PanelColor);
@@ -24,6 +26,8 @@ static class AppTheme
     public static readonly IBrush Accent = new SolidColorBrush(AccentColor);
     public static readonly IBrush Border = new SolidColorBrush(BorderColor);
     public static readonly IBrush NavSelected = new SolidColorBrush(NavSelectedColor);
+    public static readonly IBrush Record = new SolidColorBrush(RecordColor);
+    public static readonly IBrush Good = new SolidColorBrush(GoodColor);
 
     public static void Apply(Application app)
     {
