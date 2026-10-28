@@ -58,6 +58,23 @@ sealed class CapturedFrame
     public byte[] EncodePng() => Encode(SKEncodedImageFormat.Png, 100);
     public byte[] EncodeJpeg() => Encode(SKEncodedImageFormat.Jpeg, 92);
 
+    public bool TryGetRgb(int x, int y, out byte r, out byte g, out byte b)
+    {
+        r = g = b = 0;
+        if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
+        int i = (y * Width + x) * 4;
+        b = Bgra[i];
+        g = Bgra[i + 1];
+        r = Bgra[i + 2];
+        return true;
+    }
+
+    public string ColorLabel(int x, int y)
+    {
+        if (!TryGetRgb(x, y, out byte r, out byte g, out byte b)) return $"{x}, {y}";
+        return $"{x}, {y}  #{r:X2}{g:X2}{b:X2}";
+    }
+
     byte[] Encode(SKEncodedImageFormat format, int quality)
     {
         using var bitmap = new SKBitmap(new SKImageInfo(Width, Height, SKColorType.Bgra8888, SKAlphaType.Opaque));
@@ -70,13 +87,37 @@ sealed class CapturedFrame
 
     public void Save(string path, string format)
     {
-        var bytes = string.Equals(format, "jpg", StringComparison.OrdinalIgnoreCase) ? EncodeJpeg() : EncodePng();
+        var bytes = IsJpeg(format) ? EncodeJpeg() : EncodePng();
         File.WriteAllBytes(path, bytes);
+    }
+
+    public static bool IsJpeg(string format)
+    {
+        if (string.IsNullOrWhiteSpace(format)) return false;
+        format = format.Trim();
+        if (format.StartsWith('.')) format = format[1..];
+        return format.Equals("jpg", StringComparison.OrdinalIgnoreCase)
+            || format.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
     }
 
     public static CapturedFrame DecodeFile(string path)
     {
         using var source = SKBitmap.Decode(path) ?? throw new InvalidOperationException("Could not decode the captured image");
+        return FromBitmap(source);
+    }
+
+    public static CapturedFrame DecodeBytes(byte[] data)
+    {
+        if (data == null || data.Length == 0) throw new InvalidOperationException("Could not decode the captured image");
+        SKBitmap source;
+        try { source = SKBitmap.Decode(data); }
+        catch (Exception ex) { throw new InvalidOperationException("Could not decode the captured image", ex); }
+        if (source == null) throw new InvalidOperationException("Could not decode the captured image");
+        using (source) return FromBitmap(source);
+    }
+
+    static CapturedFrame FromBitmap(SKBitmap source)
+    {
         if (source.Width <= 0 || source.Height <= 0) throw new InvalidOperationException("The captured image is empty");
         using var converted = new SKBitmap(new SKImageInfo(source.Width, source.Height, SKColorType.Bgra8888, SKAlphaType.Opaque));
         using (var canvas = new SKCanvas(converted))

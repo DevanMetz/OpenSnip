@@ -74,6 +74,54 @@ sealed class X11Pointer : IDisposable
         try { _close(_display); } catch { }
     }
 
+    public static (int X, int Y)? TryGet(string displayName = null)
+    {
+        try
+        {
+            var display = Native.XOpenDisplay(displayName);
+            if (display == IntPtr.Zero) return null;
+            try
+            {
+                var root = Native.XDefaultRootWindow(display);
+                return root != IntPtr.Zero && Native.XQueryPointer(display, root, out _, out _, out int x, out int y, out _, out _, out _) != 0 ? (x, y) : null;
+            }
+            finally { Native.XCloseDisplay(display); }
+        }
+        catch (DllNotFoundException) { return null; }
+        catch (EntryPointNotFoundException) { return null; }
+    }
+
+    public static bool TryWarp(string displayName, int x, int y)
+    {
+        try
+        {
+            var display = Native.XOpenDisplay(displayName);
+            if (display == IntPtr.Zero) return false;
+            try
+            {
+                var root = Native.XDefaultRootWindow(display);
+                if (root == IntPtr.Zero) return false;
+                Native.XWarpPointer(display, IntPtr.Zero, root, 0, 0, 0, 0, x, y);
+                Native.XSync(display, 0);
+                return true;
+            }
+            finally { Native.XCloseDisplay(display); }
+        }
+        catch (DllNotFoundException) { return false; }
+        catch (EntryPointNotFoundException) { return false; }
+    }
+
+    static class Native
+    {
+        const string Lib = "libX11.so.6";
+        [DllImport(Lib)] public static extern IntPtr XOpenDisplay(string name);
+        [DllImport(Lib)] public static extern int XCloseDisplay(IntPtr display);
+        [DllImport(Lib)] public static extern IntPtr XDefaultRootWindow(IntPtr display);
+        [DllImport(Lib)] public static extern int XQueryPointer(IntPtr display, IntPtr window, out IntPtr root, out IntPtr child, out int rootX, out int rootY, out int winX, out int winY, out uint mask);
+        [DllImport(Lib)] public static extern int XWarpPointer(IntPtr display, IntPtr src, IntPtr dest, int srcX, int srcY, uint srcWidth, uint srcHeight, int destX, int destY);
+        [DllImport(Lib)] public static extern int XSync(IntPtr display, int discard);
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     delegate IntPtr OpenDisplay(string name);
 

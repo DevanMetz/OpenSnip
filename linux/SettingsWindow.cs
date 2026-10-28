@@ -22,8 +22,11 @@ sealed class SettingsWindow : Window
     readonly List<Action> _refresh = new();
 
     CheckBox _copy;
-    CheckBox _preview;
+    RadioButton _preview;
+    RadioButton _editor;
+    RadioButton _nothing;
     ComboBox _previewSeconds;
+    bool _suppress;
     CheckBox _magnifier;
     ComboBox _delaySeconds;
     CheckBox _autoSave;
@@ -31,6 +34,22 @@ sealed class SettingsWindow : Window
     ComboBox _format;
     CheckBox _monthly;
     CheckBox _startOnLogin;
+    TextBox _videoFolderBox;
+    CheckBox _systemAudio;
+    CheckBox _recordMic;
+    ComboBox _micBox;
+    ComboBox _fps;
+    ComboBox _quality;
+    CheckBox _recordCursor;
+    CheckBox _recordCountdown;
+    CheckBox _copyVideo;
+    bool _filling;
+    List<MicItem> _mics = new() { new MicItem("", "Default") };
+    CheckBox _printScreen;
+    TextBlock _shortcutStatus;
+    readonly List<ShortcutRow> _shortcuts = new();
+    ShortcutRow _listeningRow;
+    int _listenGeneration;
 
     public SettingsWindow(App app, string startPage = "Capture")
     {
@@ -84,6 +103,7 @@ sealed class SettingsWindow : Window
 
         AddPage("Capture", BuildCapture());
         AddPage("Saving", BuildSaving());
+        AddPage("Recording", BuildRecording());
         AddPage("Shortcuts", BuildShortcuts());
         AddPage("General", BuildGeneral());
         ShowPage(startPage);
@@ -96,7 +116,11 @@ sealed class SettingsWindow : Window
                 e.Handled = true;
             }
         };
-        Closed += (_, _) => app.SettingsWindowClosed(this);
+        Closed += (_, _) =>
+        {
+            StopShortcutCapture();
+            app.SettingsWindowClosed(this);
+        };
     }
 
     void AddPage(string name, Control page)
@@ -147,6 +171,7 @@ sealed class SettingsWindow : Window
 
     public void ShowPage(string name)
     {
+        StopShortcutCapture();
         if (!_pages.TryGetValue(name, out var page)) name = "Capture";
         if (!_pages.TryGetValue(name, out page)) return;
         _currentPage = name;
@@ -168,16 +193,28 @@ sealed class SettingsWindow : Window
         _copy = Check("Copy to the clipboard", _s.CopyToClipboard, v => _s.CopyToClipboard = v);
         panel.Children.Add(_copy);
 
-        _preview = Check("Show a small preview", _s.ShowThumbnail, v =>
-        {
-            _s.ShowThumbnail = v;
-            _previewSeconds.IsEnabled = v;
-        });
-        panel.Children.Add(_preview);
-
         _previewSeconds = IntCombo(_s.PreviewSeconds, new[] { 3, 6, 10, 20 },
             n => $"{n} seconds", v => _s.PreviewSeconds = v);
-        _previewSeconds.IsEnabled = _s.ShowThumbnail;
+        SetPreviewDelayEnabled(_s.ShowThumbnail && !_s.OpenEditorAfterSnip);
+
+        _preview = Radio("Show a small preview", _s.ShowThumbnail && !_s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = true;
+            _s.OpenEditorAfterSnip = false;
+        });
+        _editor = Radio("Open the editor", _s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = false;
+            _s.OpenEditorAfterSnip = true;
+        });
+        _nothing = Radio("Nothing else", !_s.ShowThumbnail && !_s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = false;
+            _s.OpenEditorAfterSnip = false;
+        });
+        panel.Children.Add(_preview);
+        panel.Children.Add(_editor);
+        panel.Children.Add(_nothing);
         panel.Children.Add(Row("Preview stays for", _previewSeconds));
 
         panel.Children.Add(Heading("Selection"));
@@ -190,12 +227,19 @@ sealed class SettingsWindow : Window
 
         _refresh.Add(() =>
         {
-            _copy.IsChecked = _s.CopyToClipboard;
-            _preview.IsChecked = _s.ShowThumbnail;
-            _previewSeconds.IsEnabled = _s.ShowThumbnail;
-            _magnifier.IsChecked = _s.ShowMagnifier;
-            SetComboValue(_previewSeconds, _s.PreviewSeconds);
-            SetComboValue(_delaySeconds, _s.DelaySeconds);
+            _suppress = true;
+            try
+            {
+                _copy.IsChecked = _s.CopyToClipboard;
+                _preview.IsChecked = _s.ShowThumbnail && !_s.OpenEditorAfterSnip;
+                _editor.IsChecked = _s.OpenEditorAfterSnip;
+                _nothing.IsChecked = !_s.ShowThumbnail && !_s.OpenEditorAfterSnip;
+                SetPreviewDelayEnabled(_s.ShowThumbnail && !_s.OpenEditorAfterSnip);
+                _magnifier.IsChecked = _s.ShowMagnifier;
+                SetComboValue(_previewSeconds, _s.PreviewSeconds);
+                SetComboValue(_delaySeconds, _s.DelaySeconds);
+            }
+            finally { _suppress = false; }
         });
         return panel;
     }
@@ -245,6 +289,14 @@ sealed class SettingsWindow : Window
         };
         panel.Children.Add(Row("Format", _format));
 
+        panel.Children.Add(Heading("Recordings"));
+        _videoFolderBox = new TextBox { Text = _s.VideoFolder, IsReadOnly = true, MinWidth = 200 };
+        var videoBrowse = new Button { Content = "Browse…" };
+        videoBrowse.Click += async (_, _) => await BrowseFolderAsync(path => _s.VideoFolder = path, _videoFolderBox);
+        var videoOpen = new Button { Content = "Open" };
+        videoOpen.Click += (_, _) => OpenChosenFolder(_s.VideoFolder);
+        panel.Children.Add(Row("Folder", FolderControls(_videoFolderBox, videoBrowse, videoOpen)));
+
         panel.Children.Add(Heading("Organizing"));
         _monthly = Check("Sort into monthly subfolders", _s.MonthlyFolders, v => _s.MonthlyFolders = v);
         panel.Children.Add(_monthly);
@@ -253,19 +305,145 @@ sealed class SettingsWindow : Window
         {
             _autoSave.IsChecked = _s.AutoSave;
             _folderBox.Text = _s.SaveFolder;
+            _videoFolderBox.Text = _s.VideoFolder;
             _format.SelectedIndex = string.Equals(_s.SaveFormat, "jpg", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             _monthly.IsChecked = _s.MonthlyFolders;
         });
         return panel;
     }
 
+    Control BuildRecording()
+    {
+        var panel = Page("Recording");
+        panel.Children.Add(Heading("Sound"));
+        _systemAudio = Check("Record system sound", _s.RecordSystemAudio, v => _s.RecordSystemAudio = v);
+        panel.Children.Add(_systemAudio);
+        _recordMic = Check("Record my microphone", _s.RecordMicrophone, v =>
+        {
+            _s.RecordMicrophone = v;
+            if (_micBox != null) _micBox.IsEnabled = v;
+        });
+        panel.Children.Add(_recordMic);
+
+        _micBox = new ComboBox { MinWidth = 220, IsEnabled = _s.RecordMicrophone };
+        FillMics();
+        _micBox.SelectionChanged += (_, _) =>
+        {
+            if (_filling || _micBox.SelectedItem is not MicItem item) return;
+            _s.MicrophoneDevice = item.Id;
+            Save();
+        };
+        panel.Children.Add(Row("Microphone", _micBox));
+
+        panel.Children.Add(Heading("Video"));
+        _fps = IntCombo(_s.RecordFramerate, new[] { 30, 60 }, n => $"{n} fps", v => _s.RecordFramerate = v);
+        panel.Children.Add(Row("Frame rate", _fps));
+
+        _quality = new ComboBox
+        {
+            ItemsSource = new[] { "High", "Standard" },
+            SelectedIndex = _s.RecordHighQuality ? 0 : 1,
+            MinWidth = 160,
+        };
+        _quality.SelectionChanged += (_, _) =>
+        {
+            if (_filling || _quality.SelectedIndex < 0) return;
+            _s.RecordHighQuality = _quality.SelectedIndex == 0;
+            Save();
+        };
+        panel.Children.Add(Row("Quality", _quality));
+
+        _recordCursor = Check("Show the mouse cursor", _s.RecordCursor, v => _s.RecordCursor = v);
+        panel.Children.Add(_recordCursor);
+        _recordCountdown = Check("Count down before recording", _s.RecordCountdown, v => _s.RecordCountdown = v);
+        panel.Children.Add(_recordCountdown);
+        _copyVideo = Check("Copy the video to the clipboard", _s.CopyRecordingToClipboard, v => _s.CopyRecordingToClipboard = v);
+        panel.Children.Add(_copyVideo);
+
+        _refresh.Add(() =>
+        {
+            _filling = true;
+            _systemAudio.IsChecked = _s.RecordSystemAudio;
+            _recordMic.IsChecked = _s.RecordMicrophone;
+            _micBox.IsEnabled = _s.RecordMicrophone;
+            FillMics();
+            SetComboValue(_fps, _s.RecordFramerate);
+            _quality.SelectedIndex = _s.RecordHighQuality ? 0 : 1;
+            _recordCursor.IsChecked = _s.RecordCursor;
+            _recordCountdown.IsChecked = _s.RecordCountdown;
+            _copyVideo.IsChecked = _s.CopyRecordingToClipboard;
+            _filling = false;
+        });
+
+        _ = LoadMicrophonesAsync();
+        return panel;
+    }
+
+    async Task LoadMicrophonesAsync()
+    {
+        AudioDevices audio;
+        try { audio = await Task.Run(AudioDevices.Discover); }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            return;
+        }
+        if (!IsVisible && _micBox == null) return;
+        var items = new List<MicItem> { new("", "Default") };
+        foreach (var mic in audio.Microphones)
+            items.Add(new MicItem(mic.Name, mic.Description));
+        _mics = items;
+        if (!_mics.Any(item => item.Id == _s.MicrophoneDevice)) _s.MicrophoneDevice = "";
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_micBox == null) return;
+            _filling = true;
+            FillMics();
+            _filling = false;
+        });
+    }
+
+    void FillMics()
+    {
+        _micBox.ItemsSource = _mics.ToList();
+        int index = _mics.FindIndex(item => item.Id == _s.MicrophoneDevice);
+        _micBox.SelectedIndex = index >= 0 ? index : 0;
+    }
+
     Control BuildShortcuts()
     {
         var panel = Page("Shortcuts");
-        panel.Children.Add(Heading("Commands"));
-        panel.Children.Add(CommandRow("Snip", PlatformInfo.Command("--snip")));
-        panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
-        panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
+        if (_app.HasGlobalHotkeys)
+        {
+            ShortcutRowFor(panel, "Snip", () => _s.SnipHotkey, v => _s.SnipHotkey = v);
+            ShortcutRowFor(panel, "Snip after delay", () => _s.DelayHotkey, v => _s.DelayHotkey = v);
+            ShortcutRowFor(panel, "Repeat last region", () => _s.RepeatHotkey, v => _s.RepeatHotkey = v);
+            _printScreen = Check("Also use the Print Screen key", _s.UsePrintScreen, v => _s.UsePrintScreen = v);
+            panel.Children.Add(_printScreen);
+            _shortcutStatus = new TextBlock
+            {
+                Foreground = new SolidColorBrush(Color.Parse("#FFAA5A")),
+                FontSize = 12.5,
+                TextWrapping = TextWrapping.Wrap,
+                IsVisible = false,
+            };
+            panel.Children.Add(_shortcutStatus);
+            _refresh.Add(() =>
+            {
+                foreach (var row in _shortcuts) ShowShortcut(row);
+                if (_printScreen != null) _printScreen.IsChecked = _s.UsePrintScreen;
+            });
+        }
+        else
+        {
+            panel.Children.Add(Heading("Commands"));
+            panel.Children.Add(CommandRow("Snip", PlatformInfo.Command("--snip")));
+            panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
+            panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
+            panel.Children.Add(CommandRow("Pin clipboard image", PlatformInfo.Command("--pin")));
+            panel.Children.Add(CommandRow("Record video", PlatformInfo.Command("--record")));
+        }
+
         return panel;
     }
 
@@ -344,20 +522,37 @@ sealed class SettingsWindow : Window
 
     void ResetToDefaults()
     {
+        StopShortcutCapture();
         _s.CopyToClipboard = true;
         _s.AutoSave = true;
         _s.SaveFolder = SettingsDefaults.DefaultSaveFolder;
         _s.SaveFormat = "png";
         _s.MonthlyFolders = false;
         _s.ShowThumbnail = true;
+        _s.OpenEditorAfterSnip = false;
         _s.PreviewSeconds = 6;
         _s.ShowMagnifier = true;
         _s.DelaySeconds = 3;
+        _s.VideoFolder = SettingsDefaults.DefaultVideoFolder;
+        _s.RecordSystemAudio = true;
+        _s.RecordMicrophone = false;
+        _s.MicrophoneDevice = "";
+        _s.RecordFramerate = 30;
+        _s.RecordHighQuality = true;
+        _s.RecordCursor = true;
+        _s.RecordCountdown = true;
+        _s.CopyRecordingToClipboard = true;
+        _s.SnipHotkey = "Win+Shift+S";
+        _s.DelayHotkey = "";
+        _s.RepeatHotkey = "";
+        _s.UsePrintScreen = true;
         Save();
         foreach (var refresh in _refresh) refresh();
     }
 
-    async Task BrowseFolderAsync()
+    async Task BrowseFolderAsync() => await BrowseFolderAsync(path => _s.SaveFolder = path, _folderBox);
+
+    async Task BrowseFolderAsync(Action<string> set, TextBox box)
     {
         try
         {
@@ -369,8 +564,8 @@ sealed class SettingsWindow : Window
             if (result.Count == 0) return;
             var local = result[0].TryGetLocalPath();
             if (string.IsNullOrEmpty(local)) return;
-            _s.SaveFolder = local;
-            _folderBox.Text = local;
+            set(local);
+            box.Text = local;
             Save();
         }
         catch (Exception ex)
@@ -379,11 +574,13 @@ sealed class SettingsWindow : Window
         }
     }
 
-    void OpenFolder()
+    void OpenFolder() => OpenChosenFolder(_s.SaveFolder);
+
+    void OpenChosenFolder(string root)
     {
         try
         {
-            string folder = _s.FolderFor(_s.SaveFolder);
+            string folder = _s.FolderFor(root);
             Directory.CreateDirectory(folder);
             PlatformInfo.Open(folder);
         }
@@ -391,6 +588,35 @@ sealed class SettingsWindow : Window
         {
             _ = MessageDialog.AlertAsync(this, "Could not open the folder: " + ex.Message);
         }
+    }
+
+    static Grid FolderControls(TextBox box, Button browse, Button open)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnSpacing = 8,
+        };
+        grid.Children.Add(box);
+        Grid.SetColumn(box, 0);
+        grid.Children.Add(browse);
+        Grid.SetColumn(browse, 1);
+        grid.Children.Add(open);
+        Grid.SetColumn(open, 2);
+        return grid;
+    }
+
+    sealed class MicItem
+    {
+        public MicItem(string id, string label)
+        {
+            Id = id ?? "";
+            Label = string.IsNullOrWhiteSpace(label) ? "Default" : label;
+        }
+
+        public string Id { get; }
+        public string Label { get; }
+        public override string ToString() => Label;
     }
 
     void Save()
@@ -404,6 +630,7 @@ sealed class SettingsWindow : Window
         var check = new CheckBox { Content = text, IsChecked = value, Margin = new Thickness(0, 2) };
         check.IsCheckedChanged += (_, _) =>
         {
+            if (_suppress) return;
             if (check.IsChecked is bool on)
             {
                 set(on);
@@ -411,6 +638,34 @@ sealed class SettingsWindow : Window
             }
         };
         return check;
+    }
+
+    void SetPreviewDelayEnabled(bool enabled)
+    {
+        if (_previewSeconds == null) return;
+        _previewSeconds.IsEnabled = enabled;
+        // The fluent theme keeps a disabled combo at full strength, so dim it.
+        _previewSeconds.Opacity = enabled ? 1 : 0.4;
+    }
+
+    RadioButton Radio(string text, bool value, Action select)
+    {
+        var radio = new RadioButton
+        {
+            Content = text,
+            GroupName = "AfterSnip",
+            IsChecked = value,
+            Foreground = AppTheme.Text,
+            Margin = new Thickness(0, 1),
+        };
+        radio.IsCheckedChanged += (_, _) =>
+        {
+            if (_suppress || radio.IsChecked != true) return;
+            select();
+            SetPreviewDelayEnabled(ReferenceEquals(radio, _preview));
+            Save();
+        };
+        return radio;
     }
 
     ComboBox IntCombo(int current, int[] values, Func<int, string> label, Action<int> set)
@@ -464,6 +719,129 @@ sealed class SettingsWindow : Window
         Foreground = AppTheme.Accent,
         Margin = new Thickness(0, 13, 0, 1),
     };
+
+    void ShortcutRowFor(StackPanel panel, string label, Func<string> get, Action<string> set)
+    {
+        var row = new ShortcutRow { Get = get, Set = set };
+        row.Value = new TextBlock
+        {
+            FontWeight = FontWeight.SemiBold,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var box = new Border
+        {
+            Background = AppTheme.Panel,
+            BorderBrush = AppTheme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            MinWidth = 180,
+            MinHeight = 32,
+            Padding = new Thickness(10, 4),
+            Child = row.Value,
+        };
+        row.Change = new Button { Content = "Change…", MinWidth = 88 };
+        var clear = new Button { Content = "Clear", MinWidth = 72 };
+        row.Change.Click += (_, _) =>
+        {
+            if (_listeningRow == row) StopShortcutCapture();
+            else StartShortcutCapture(row);
+        };
+        clear.Click += (_, _) =>
+        {
+            StopShortcutCapture();
+            row.Set("");
+            ShowShortcut(row);
+            Save();
+        };
+        var controls = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnSpacing = 8,
+        };
+        controls.Children.Add(box);
+        Grid.SetColumn(box, 0);
+        controls.Children.Add(row.Change);
+        Grid.SetColumn(row.Change, 1);
+        controls.Children.Add(clear);
+        Grid.SetColumn(clear, 2);
+        panel.Children.Add(Row(label, controls));
+        _shortcuts.Add(row);
+        ShowShortcut(row);
+    }
+
+    void ShowShortcut(ShortcutRow row)
+    {
+        var chord = HotkeyChord.Parse(row.Get());
+        bool listening = _listeningRow == row;
+        row.Value.Text = listening ? "Press keys…" : chord.Display;
+        row.Value.Foreground = listening ? AppTheme.Accent : chord.IsEmpty ? AppTheme.Muted : AppTheme.Text;
+        row.Change.Content = listening ? "Cancel" : "Change…";
+    }
+
+    void StartShortcutCapture(ShortcutRow row)
+    {
+        StopShortcutCapture();
+        int generation = ++_listenGeneration;
+        if (!_app.BeginShortcutCapture(chord =>
+            Dispatcher.UIThread.Post(() => OnShortcutCaptured(row, generation, chord))))
+        {
+            _ = MessageDialog.AlertAsync(this, "Couldn't listen for a shortcut.");
+            return;
+        }
+        _listeningRow = row;
+        if (_shortcutStatus != null) _shortcutStatus.IsVisible = false;
+        ShowShortcut(row);
+    }
+
+    void OnShortcutCaptured(ShortcutRow row, int generation, HotkeyChord? chord)
+    {
+        if (generation != _listenGeneration) return;
+        if (chord == null || (chord.Value.Key == "Escape" && !chord.Value.HasModifier))
+        {
+            StopShortcutCapture();
+            return;
+        }
+        if (!HotkeyGrabs.IsSafe(chord.Value))
+        {
+            if (_shortcutStatus != null)
+            {
+                _shortcutStatus.Text = $"{chord.Value.Display} needs Ctrl, Alt, Shift, or Win.";
+                _shortcutStatus.IsVisible = true;
+            }
+            return;
+        }
+        foreach (var other in _shortcuts)
+        {
+            if (ReferenceEquals(other, row)) continue;
+            if (HotkeyChord.Parse(other.Get()) == chord.Value)
+            {
+                other.Set("");
+                ShowShortcut(other);
+            }
+        }
+        row.Set(chord.Value.Serialize());
+        StopShortcutCapture();
+        Save();
+    }
+
+    void StopShortcutCapture()
+    {
+        _listenGeneration++;
+        var row = _listeningRow;
+        _listeningRow = null;
+        _app.EndShortcutCapture();
+        if (row != null) ShowShortcut(row);
+        if (_shortcutStatus != null) _shortcutStatus.IsVisible = false;
+    }
+
+    sealed class ShortcutRow
+    {
+        public Func<string> Get;
+        public Action<string> Set;
+        public TextBlock Value;
+        public Button Change;
+    }
 
     static Grid Row(string label, Control control)
     {

@@ -18,9 +18,27 @@ static class SettingsDefaults
 
     public static string DefaultSaveFolder => Path.Combine(PicturesFolder, "OpenSnip");
 
+    public static string VideosFolder
+    {
+        get
+        {
+            string videos = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+            if (!string.IsNullOrWhiteSpace(videos)) return videos;
+
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrWhiteSpace(home)) home = Environment.GetEnvironmentVariable("HOME");
+            if (string.IsNullOrWhiteSpace(home)) home = "/tmp";
+            return Path.Combine(home, "Videos");
+        }
+    }
+
+    public static string DefaultVideoFolder => Path.Combine(VideosFolder, "OpenSnip");
+
     public static void ApplyLinux(Settings settings)
     {
         if (string.IsNullOrWhiteSpace(settings.SaveFolder) || !Path.IsPathRooted(settings.SaveFolder))
             settings.SaveFolder = DefaultSaveFolder;
+        if (string.IsNullOrWhiteSpace(settings.VideoFolder) || !Path.IsPathRooted(settings.VideoFolder))
+            settings.VideoFolder = DefaultVideoFolder;
     }
 }

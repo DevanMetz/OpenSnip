@@ -1,83 +1,74 @@
 # Linux parity
 
-Each Windows feature and setting, and where Linux stands on this branch.
+Status of each Windows feature on Linux. This file describes the tree it ships with.
 
-`working` matches Windows. `partial` works, with the gap named here. `missing` is not implemented. Nothing on this list is `not possible`; where one piece cannot exist, the row says so.
-
-## Selection
-
-| Feature | Linux | Where |
-|---|---|---|
-| Drag a region in desktop pixels (inclusive edge, 3 px before a drag arms) | working | `linux/SnipSession.cs`, `linux/MonitorMap.cs`, `linux/OverlayWindow.cs` |
-| One window per monitor at that screen's scale | working | `linux/OverlayWindow.cs`, `linux/MonitorMap.cs` |
-| X11 drag across monitors that use different scales | working | `linux/X11Pointer.cs` reads root pixels once the pointer leaves the window |
-| Wayland drag across monitors that use different scales | partial | Wayland cannot report the pointer. The press window's coordinates are extended, which stays exact only when both screens share a scale. `linux/OverlayWindow.cs` |
-| X11 capture of outputs left of or above the origin | working | `linux/X11Randr.cs`, `linux/Capture.cs`. If the server rejects that rectangle, the grab falls back to the root window at (0, 0). |
-| Click grabs the monitor | working | `linux/SnipSession.cs` |
-| Click grabs the window under the cursor | missing | `src/CaptureOverlay.cs` |
-| `F` grabs the monitor immediately | partial | Linux selects it. Enter completes the grab. `linux/SnipSession.cs` |
-| `A` grabs every monitor immediately | partial | Linux selects the desktop. Enter completes the grab. On Windows a recording stays on one monitor. |
-| Enter grabs the selection, or the monitor under the cursor | working | `linux/SnipSession.cs` |
-| Esc or right-click during a drag cancels the drag first | partial | Linux cancels the whole snip. `linux/SnipSession.cs`, `linux/OverlayWindow.cs` |
-| Arrow keys move the pointer 1 px, Shift moves 10 | partial | Linux moves the overlay cursor in desktop pixels and does not move the OS pointer. Wayland cannot warp the pointer. `linux/SnipSession.cs` |
-| Magnifier with desktop coordinates | working | `linux/OverlayWindow.cs` |
-| Magnifier color | missing | `src/CaptureOverlay.cs` |
-| Hint text on the overlay | missing | Left off. The Windows hint is helper text. |
-| Nearest-neighbor frozen frame | working | `linux/OverlayWindow.cs` |
-
-## After a snip
-
-| Feature | Linux | Where |
-|---|---|---|
-| Copy a PNG to the clipboard | working | `linux/App.cs` |
-| Auto-save PNG or JPG | working | `linux/CapturedFrame.cs`. `--capture file.jpeg` writes a PNG; only the format string `jpg` is JPEG. |
-| Monthly subfolders | working | `src/Settings.cs` |
-| Preview on the monitor that was snipped | partial | The preview sits on the primary monitor. `linux/ThumbnailWindow.cs` |
-| Preview click opens the editor | missing | Click opens the file with `xdg-open`. `linux/ThumbnailWindow.cs` |
-| Drag the preview out as a file | missing | `src/SmallWindows.cs` |
-| Open the editor after a snip | missing | `OpenEditorAfterSnip` is stored in `src/Settings.cs` and unused on Linux. |
-| Pin an image | missing | `src/SmallWindows.cs` |
-| Repeat the last region | working | `linux/App.cs` |
-| Countdown at the bottom of the monitor under the pointer | partial | The countdown is centered on the primary monitor. `linux/CountdownWindow.cs` |
-
-## Tray and commands
-
-| Feature | Linux | Where |
-|---|---|---|
-| Snip, snip after delay, repeat, screenshots folder, settings, exit | working | `linux/App.cs` |
-| Tray click starts a snip | working | `linux/App.cs` |
-| Record, pin, editor, recordings folder | missing | `src/TrayApp.cs` |
-| Tooltip names the snip shortcut | missing | `src/TrayApp.cs` |
-| First-run balloon | missing | Left off. It is helper text. `src/TrayApp.cs` |
-| Second instance forwards snip, delay, repeat, and settings | working | `linux/SingleInstance.cs` |
-| `--capture` and `--diagnostics` | working | `linux/Cli.cs`, `linux/CaptureCli.cs`, `linux/Diagnostics.cs` |
-| Built-in global shortcuts (Win+Shift+S, Win+Shift+R, Print Screen) | missing | Settings lists the commands to bind. `linux/SettingsWindow.cs` |
-
-## Settings
-
-| Setting | Linux | Where |
-|---|---|---|
-| Copy to the clipboard | working | `linux/SettingsWindow.cs` |
-| Show a preview, and how long it stays | working | `linux/SettingsWindow.cs` |
-| Open the editor, or do nothing else | missing | `src/SettingsForm.cs` |
-| Magnifier | working | `linux/SettingsWindow.cs` |
-| Delayed-snip length | working | `linux/SettingsWindow.cs` |
-| Auto-save, screenshot folder, PNG or JPG, monthly folders | working | `linux/SettingsWindow.cs` |
-| Recording folder | missing | `src/SettingsForm.cs` |
-| System audio, microphone, device, frame rate, quality, cursor, countdown, copy the video | missing | `src/Settings.cs`, `src/Recording.cs` |
-| Shortcut editor and Print Screen | missing | The Shortcuts page lists commands. `linux/SettingsWindow.cs` |
-| Start on login | working | XDG autostart. `linux/Autostart.cs` |
-| Open the settings folder, reset to defaults | working | `linux/SettingsWindow.cs` |
+`working` matches Windows. `partial` works with a gap named here. `missing` has no Linux path yet. `not possible` cannot exist on Linux; the closest equivalent is named.
 
 ## Capture
 
-| Backend | Linux | Where |
+| Feature | Linux | Files |
 |---|---|---|
-| X11 through libX11, then `maim`, ImageMagick `import`, and `scrot` | partial | The native grab uses `DllImport("libX11")`, so a system that only has `libX11.so.6` fails that path and uses a fallback. `linux/Capture.cs` |
-| Wayland portal, then `grim`, `gnome-screenshot`, and `spectacle` | partial | A portal image whose size is not the desktop bounding box is stretched across that box, so mixed DPI is not pixel-exact. `linux/DBus.cs`, `linux/MonitorMap.cs` |
+| Region snip on a frozen screen | working | `linux/Capture.cs`, `linux/OverlayWindow.cs` |
+| Click grabs the monitor | working | `linux/OverlayWindow.cs` |
+| Click grabs the window under the cursor | partial. X11 only | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
+| `F` selects the monitor; Enter captures it | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| `A` selects all monitors; Enter captures them | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Enter confirms the selection or monitor; arrows nudge 1 px, or 10 with Shift | working. X11 warps the pointer; Wayland moves the overlay cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Esc and right-click cancel the snip | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Mixed-DPI placement | working on X11, with one window per monitor. Wayland cross-monitor drags are exact when scales match. | `linux/OverlayWindow.cs`, `linux/MonitorMap.cs`, `linux/X11Pointer.cs` |
+| X11 outputs left of or above the origin | working. Capture falls back to the root at (0, 0) if the server rejects the bounding box. | `linux/X11Randr.cs`, `linux/Capture.cs` |
+| Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
+| Magnifier color | working | `linux/OverlayWindow.cs` |
+| X11 capture | working | `linux/Capture.cs` |
+| Wayland capture (portal screenshot) | working | `linux/Capture.cs`, `linux/DBus.cs` |
+| Copy PNG to the clipboard | working. `xclip` on X11, `wl-copy` on Wayland, then Avalonia. | `linux/ClipboardService.cs` |
+| Auto-save PNG or JPG | working | `linux/CapturedFrame.cs`, `linux/SettingsWindow.cs` |
+| Monthly folders | working | `src/Settings.cs` |
+| Preview thumbnail | working. It does not take focus and opens on the snipped monitor. | `linux/ThumbnailWindow.cs`, `linux/SnipGeometry.cs` |
+| Click the preview to annotate | working | `linux/ThumbnailWindow.cs` |
+| Drag the preview into another app | working | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
+| Annotation editor | working | `src/EditorForm.cs` |
+| Open the editor after a snip | working | `src/Settings.cs` |
+| Pin a snip, including from the clipboard | partial. Pin from clipboard or file; editor pin remains Windows-only | `src/SmallWindows.cs` |
+| Delayed snip | working. The countdown sits at the bottom of the monitor under the pointer, does not take focus, and closes before capture. X11 clicks pass through it; Wayland clicks do not. | `linux/CountdownWindow.cs`, `linux/X11ClickThrough.cs` |
+| Tray snip waits for the menu to close | working | `linux/App.cs`, `linux/SnipGesture.cs` |
+| Repeat the last region | working | `linux/App.cs` |
 
-## Recording
+## Screen recording
 
-| Feature | Linux | Where |
+| Feature | Linux | Files |
 |---|---|---|
-| Region recording, audio, cursor, countdown, red outline, control bar | missing | `src/Recording.cs` |
+| Record a region to MP4 | working on X11. Tray **Record video** and `opensnip --record`. | `linux/App.cs`, `linux/RecordingSession.cs`, `linux/FramePump.cs` |
+| Wayland recording | missing. The portal ScreenCast API is not wired. The app reports that recording needs an X11 session. | `linux/App.cs` |
+| Record the window under the cursor | working on X11. | `linux/OverlayWindow.cs` |
+| One monitor, even dimensions, 16 px minimum | working | `linux/RecordGeometry.cs` |
+| 3-2-1 countdown | working | `linux/RecordingChrome.cs` |
+| Red outline | working | `linux/RecordingChrome.cs` |
+| Pause, microphone mute, stop, discard | working | `linux/RecordingChrome.cs`, `linux/RecordingSession.cs` |
+| Outline and bar left out of the video | working on X11. Those rectangles are rebuilt from the wallpaper pixmap and the windows underneath. | `linux/X11FrameSource.cs` |
+| System audio | partial. PulseAudio or PipeWire monitor source through `pactl` and `ffmpeg`. Video only when `pactl` or a monitor source is missing. | `linux/AudioDevices.cs`, `linux/FfmpegPlan.cs` |
+| Microphone, off until enabled | partial. Same `pactl` dependency. Mute keeps a silent stream so paused segments stay compatible. | `linux/AudioDevices.cs` |
+| Hardware H.264 | partial. Software libx264 (CRF 18 high, 28 standard). VAAPI and NVENC are not selected. | `linux/FfmpegPlan.cs` |
+| 30 or 60 fps | working | `linux/FfmpegPlan.cs`, `linux/SettingsWindow.cs` |
+| Mouse cursor in the video | working. XFixes cursor image. | `linux/X11FrameSource.cs` |
+| Copy the MP4 | partial. `text/uri-list` through `xclip` or `wl-copy`. | `linux/ClipboardService.cs`, `linux/FileUri.cs` |
+| Preview still that plays on click | working. Play badge; click opens the file. The preview stays at least 8 seconds. | `linux/ThumbnailWindow.cs`, `linux/App.cs` |
+| Drag the video preview out | missing | `linux/ThumbnailWindow.cs` |
+| `Win+Shift+R` | missing. The tray item and `opensnip --record` start and stop a recording. A global key grab is not built in. | `linux/App.cs`, `linux/Cli.cs` |
+| Tray click stops a recording, otherwise snips | working | `linux/App.cs` |
+| Snip blocked while recording | working | `linux/App.cs` |
+| Open the recordings folder | working | `linux/App.cs` |
+| Save under Videos/OpenSnip as `Recording yyyy-MM-dd HH.mm.ss.mp4` | working | `linux/FfmpegPlan.cs`, `linux/SettingsDefaults.cs` |
+
+## Shortcuts and settings
+
+| Feature | Linux | Files |
+|---|---|---|
+| `Win+Shift+S`, delay, repeat, Print Screen | working on X11. Bind commands in the desktop on Wayland. | `linux/Cli.cs`, `linux/SettingsWindow.cs` |
+| Settings pages for capture, saving, recording, shortcuts, general | working. Shortcuts supports X11 key bindings and lists commands on Wayland. | `linux/SettingsWindow.cs` |
+| Recording options: system sound, microphone, device, frame rate, quality, cursor, countdown, copy file | working | `linux/SettingsWindow.cs` |
+| Reset defaults, including the recording options and video folder | working | `linux/SettingsWindow.cs`, `linux/SettingsDefaults.cs` |
+| Start on login | working. XDG autostart. | `linux/Autostart.cs` |
+| First-run tray balloon | missing. The tray menu is available as soon as the icon is. | `src/TrayApp.cs`, `linux/App.cs` |
+| Diagnostics include capture, clipboard, ffmpeg, and audio devices | working | `linux/Diagnostics.cs` |
+| Second launch forwards snip, delay, repeat, record, and settings | working | `linux/SingleInstance.cs` |

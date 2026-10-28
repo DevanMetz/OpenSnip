@@ -11,9 +11,21 @@ namespace OpenSnip;
 
 static class OverlayWindow
 {
-    public static Task<PixelRect?> SelectAsync(CapturedFrame frame, Settings settings)
+    public static PixelRect ScreenRect(CapturedFrame frame, PixelRect image)
     {
-        var session = new OverlaySession(frame, settings);
+        var map = MonitorMap.Create(OverlaySession.ReadLayouts(frame), frame.Width, frame.Height, frame.OriginKnown, frame.OriginX, frame.OriginY);
+        if (map.OneToOne)
+        {
+            int x = frame.OriginKnown ? frame.OriginX : map.Desktop.X;
+            int y = frame.OriginKnown ? frame.OriginY : map.Desktop.Y;
+            return new PixelRect(image.X + x, image.Y + y, image.Width, image.Height);
+        }
+        return SnipGeometry.ToScreen(image, map.Desktop, frame.Width, frame.Height);
+    }
+
+    public static Task<PixelRect?> SelectAsync(CapturedFrame frame, Settings settings, PixelRect[] windows = null, bool record = false)
+    {
+        var session = new OverlaySession(frame, settings, windows, record);
         return session.Run();
     }
 }
@@ -21,6 +33,9 @@ static class OverlayWindow
 sealed class OverlaySession
 {
     readonly Settings _settings;
+    readonly CapturedFrame _frame;
+    readonly PixelRect[] _targets;
+    readonly bool _record;
     readonly MonitorMap _map;
     readonly SnipSession _snip;
     readonly X11Pointer _pointer;
@@ -29,9 +44,12 @@ sealed class OverlaySession
     readonly TaskCompletionSource<PixelRect?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     bool _done;
 
-    public OverlaySession(CapturedFrame frame, Settings settings)
+    public OverlaySession(CapturedFrame frame, Settings settings, PixelRect[] windows, bool record)
     {
         _settings = settings;
+        _frame = frame;
+        _targets = windows;
+        _record = record;
         _pointer = X11Pointer.TryOpen();
         _map = MonitorMap.Create(ReadLayouts(frame), frame.Width, frame.Height, frame.OriginKnown, frame.OriginX, frame.OriginY);
         _snip = new SnipSession(_map);
@@ -42,6 +60,22 @@ sealed class OverlaySession
     public SnipSession Snip => _snip;
     public Settings Settings => _settings;
     public WriteableBitmap Bitmap => _bitmap;
+    public CapturedFrame Frame => _frame;
+    public PixelRect? Hover(PixelPoint point)
+    {
+        if (!_map.TryToImage(new PixelRect(point.X, point.Y, 1, 1), out var image)) return null;
+        var hit = WindowHit.At(_targets, image.X, image.Y, _frame.Width, _frame.Height);
+        if (hit is not { } rect || !_map.OneToOne) return null;
+        return new PixelRect(rect.X + point.X - image.X, rect.Y + point.Y - image.Y, rect.Width, rect.Height);
+    }
+    public SnipOutcome Release(PixelPoint point)
+    {
+        var hover = Hover(point);
+        var outcome = _snip.Release(point);
+        if (hover is { } window && outcome.HasRegion && outcome.Region == _map.MonitorRectAt(point))
+            return SnipOutcome.Chosen(window);
+        return outcome;
+    }
 
     public Task<PixelRect?> Run()
     {
@@ -86,7 +120,7 @@ sealed class OverlaySession
         if (outcome.Cancel || !outcome.HasRegion || !_map.TryToImage(outcome.Region, out var image))
             Finish(null);
         else
-            Finish(image);
+            Finish(_record ? outcome.Region : image);
     }
 
     public void WindowClosed() => Finish(null);
@@ -113,7 +147,7 @@ sealed class OverlaySession
         }, DispatcherPriority.Background);
     }
 
-    static List<MonitorLayout> ReadLayouts(CapturedFrame frame)
+    public static List<MonitorLayout> ReadLayouts(CapturedFrame frame)
     {
         var layouts = new List<MonitorLayout>();
         Window probe = null;
@@ -215,7 +249,10 @@ sealed class MonitorOverlayWindow : Window
             _ => null,
         };
         if (command == null) return;
-        _session.Apply(_session.Snip.Command(command.Value, e.KeyModifiers.HasFlag(KeyModifiers.Shift)));
+        var outcome = _session.Snip.Command(command.Value, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+        if (command is SnipCommand.Left or SnipCommand.Right or SnipCommand.Up or SnipCommand.Down && !PlatformInfo.IsWayland)
+            X11Pointer.TryWarp(null, _session.Snip.Cursor.X, _session.Snip.Cursor.Y);
+        _session.Apply(outcome);
         e.Handled = true;
     }
 
@@ -296,7 +333,7 @@ sealed class CaptureCanvas : Control
     {
         base.OnPointerReleased(e);
         if (!_session.Snip.Dragging) return;
-        var outcome = _session.Snip.Release(_session.PointerDesktop(_index, e.GetPosition(this), Bounds.Size));
+        var outcome = _session.Release(_session.PointerDesktop(_index, e.GetPosition(this), Bounds.Size));
         _session.Apply(outcome);
         e.Handled = true;
     }
@@ -323,7 +360,7 @@ sealed class CaptureCanvas : Control
 
         var snip = _session.Snip;
         Rect? readout = null;
-        if (snip.Selection is { } selection)
+        if ((snip.Selection ?? (snip.HasCursor && !snip.Dragging ? _session.Hover(snip.Cursor) : null)) is { } selection)
         {
             var local = map.LocalRect(_index, selection, view.Width, view.Height);
             if (local is { } box && box.Width > 0 && box.Height > 0)
@@ -407,19 +444,21 @@ sealed class CaptureCanvas : Control
         int frameW = _session.Bitmap.PixelSize.Width;
         int frameH = _session.Bitmap.PixelSize.Height;
         const int sourceSize = 24;
-        int left = Math.Clamp(imageX - sourceSize / 2, 0, Math.Max(0, frameW - sourceSize));
-        int top = Math.Clamp(imageY - sourceSize / 2, 0, Math.Max(0, frameH - sourceSize));
-        var source = new Rect(left, top, Math.Min(sourceSize, frameW), Math.Min(sourceSize, frameH));
+        int left = imageX - sourceSize / 2;
+        int top = imageY - sourceSize / 2;
+        int srcL = Math.Max(0, left), srcT = Math.Max(0, top);
+        int srcR = Math.Min(frameW, left + sourceSize), srcB = Math.Min(frameH, top + sourceSize);
+        var source = new Rect(srcL, srcT, srcR - srcL, srcB - srcT);
         var dest = new Rect(box.X + pad, box.Y + pad, inner, inner);
 
         context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(box.X, box.Y, total, total + labelHeight), 7, 7);
         using (context.PushClip(dest))
-            context.DrawImage(_session.Bitmap, source, dest);
-        var center = dest.Center;
+            context.DrawImage(_session.Bitmap, source, new Rect(dest.X + (srcL - left) * inner / sourceSize, dest.Y + (srcT - top) * inner / sourceSize, source.Width * inner / sourceSize, source.Height * inner / sourceSize));
+        var center = new Point(dest.X + (imageX - left + 0.5) * inner / sourceSize, dest.Y + (imageY - top + 0.5) * inner / sourceSize);
         context.DrawLine(CrosshairPen, new Point(center.X - 7, center.Y), new Point(center.X + 7, center.Y));
         context.DrawLine(CrosshairPen, new Point(center.X, center.Y - 7), new Point(center.X, center.Y + 7));
 
-        var label = new FormattedText($"{_session.Snip.Cursor.X}, {_session.Snip.Cursor.Y}", CultureInfo.InvariantCulture,
+        var label = new FormattedText($"{_session.Snip.Cursor.X}, {_session.Snip.Cursor.Y}  {_session.Frame.ColorLabel(imageX, imageY)}", CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, _typeface, 11, AppTheme.Muted);
         context.DrawText(label, new Point(box.X + (total - label.Width) / 2, box.Y + total + 2));
     }
