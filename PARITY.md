@@ -53,7 +53,7 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Mouse cursor in the video | working. XFixes cursor image. | `linux/X11FrameSource.cs` |
 | Copy the MP4 | partial. `text/uri-list` through `xclip` or `wl-copy`. | `linux/ClipboardService.cs`, `linux/FileUri.cs` |
 | Preview still that plays on click | working. Play badge; click opens the file. The preview stays at least 8 seconds. | `linux/ThumbnailWindow.cs`, `linux/App.cs` |
-| Drag the video preview out | missing | `linux/ThumbnailWindow.cs` |
+| Drag the video preview out | implemented. MP4 storage item and `text/uri-list` for native drops; desktop interoperability needs manual verification on X11/Wayland. | `linux/ThumbnailWindow.cs`, `linux/FileUri.cs` |
 | `Win+Shift+R` | missing. The tray item and `opensnip --record` start and stop a recording. A global key grab is not built in. | `linux/App.cs`, `linux/Cli.cs` |
 | Tray click stops a recording, otherwise snips | working | `linux/App.cs` |
 | Snip blocked while recording | working | `linux/App.cs` |
