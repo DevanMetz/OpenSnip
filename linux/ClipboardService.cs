@@ -18,6 +18,25 @@ static class ClipboardService
 
     static Window _hidden;
 
+    public static async Task<bool> CopyFileAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(FileUri.FromPath(path) + "\n");
+        if (await TryExternalAsync(bytes, "text/uri-list")) return true;
+        try
+        {
+            var clipboard = ClipboardOf(null);
+            if (clipboard == null) return false;
+            await clipboard.SetTextAsync(FileUri.FromPath(path));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            return false;
+        }
+    }
+
     public static string ChooseImageType(IEnumerable<string> types)
     {
         if (types == null) return null;
@@ -35,7 +54,7 @@ static class ClipboardService
     public static async Task<bool> CopyPngAsync(byte[] png, TopLevel topLevel = null)
     {
         if (png == null || png.Length == 0) return false;
-        if (await TryExternalAsync(png)) return true;
+        if (await TryExternalAsync(png, "image/png")) return true;
         try
         {
             var clipboard = ClipboardOf(topLevel);
@@ -251,19 +270,19 @@ static class ClipboardService
         return _hidden.Clipboard;
     }
 
-    static async Task<bool> TryExternalAsync(byte[] png)
+    static async Task<bool> TryExternalAsync(byte[] payload, string mime)
     {
         string command = null;
         string[] args = null;
         if (PlatformInfo.IsWayland && PlatformInfo.CommandExists("wl-copy"))
         {
             command = "wl-copy";
-            args = new[] { "--type", "image/png" };
+            args = new[] { "--type", mime };
         }
         else if (!PlatformInfo.IsWayland && PlatformInfo.CommandExists("xclip"))
         {
             command = "xclip";
-            args = new[] { "-selection", "clipboard", "-t", "image/png", "-i" };
+            args = new[] { "-selection", "clipboard", "-t", mime, "-i" };
         }
         if (command == null) return false;
 
@@ -279,7 +298,7 @@ static class ClipboardService
             foreach (var arg in args) psi.ArgumentList.Add(arg);
             using var process = Process.Start(psi);
             if (process == null) return false;
-            await process.StandardInput.BaseStream.WriteAsync(png);
+            await process.StandardInput.BaseStream.WriteAsync(payload);
             process.StandardInput.Close();
 
             using var cts = new CancellationTokenSource(3000);

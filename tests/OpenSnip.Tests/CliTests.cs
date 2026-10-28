@@ -23,6 +23,15 @@ public class CliTests
     }
 
     [Fact]
+    public void Record_command_round_trips_to_the_running_instance()
+    {
+        Assert.Equal(LaunchAction.Record, Cli.Parse(new[] { "--record" }).Action);
+        var line = RemoteCommand.Format(LaunchAction.Record, null);
+        Assert.Equal("record", line);
+        Assert.Equal(LaunchAction.Record, RemoteCommand.Parse(line).Action);
+    }
+
+    [Fact]
     public void Single_actions_parse()
     {
         Assert.Equal(LaunchAction.Snip, Cli.Parse(new[] { "--snip" }).Action);

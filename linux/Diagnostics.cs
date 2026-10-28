@@ -28,6 +28,12 @@ static class Diagnostics
         bool tray = await DBus.TrayHostAvailableAsync();
         report.AppendLine("xdg-desktop-portal: " + (portal ? "available" : "unavailable"));
         report.AppendLine("Tray host: " + (tray ? "available" : "unavailable"));
+        report.AppendLine("ffmpeg: " + (FfmpegPlan.Available ? "available" : "missing"));
+        var audio = AudioDevices.Discover();
+        report.AppendLine("System audio: " + (audio.SystemSource ?? "none"));
+        report.AppendLine("Microphones: " + (audio.Microphones.Count == 0
+            ? "none"
+            : string.Join(", ", audio.Microphones.Select(mic => mic.Description))));
         var settings = Settings.Load();
         SettingsDefaults.ApplyLinux(settings);
         string shortcuts = X11HotkeyService.IsSupported ? HotkeyBindings.From(settings).Summary : "off";

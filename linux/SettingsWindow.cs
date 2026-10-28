@@ -34,6 +34,17 @@ sealed class SettingsWindow : Window
     ComboBox _format;
     CheckBox _monthly;
     CheckBox _startOnLogin;
+    TextBox _videoFolderBox;
+    CheckBox _systemAudio;
+    CheckBox _recordMic;
+    ComboBox _micBox;
+    ComboBox _fps;
+    ComboBox _quality;
+    CheckBox _recordCursor;
+    CheckBox _recordCountdown;
+    CheckBox _copyVideo;
+    bool _filling;
+    List<MicItem> _mics = new() { new MicItem("", "Default") };
     CheckBox _printScreen;
     TextBlock _shortcutStatus;
     readonly List<ShortcutRow> _shortcuts = new();
@@ -92,6 +103,7 @@ sealed class SettingsWindow : Window
 
         AddPage("Capture", BuildCapture());
         AddPage("Saving", BuildSaving());
+        AddPage("Recording", BuildRecording());
         AddPage("Shortcuts", BuildShortcuts());
         AddPage("General", BuildGeneral());
         ShowPage(startPage);
@@ -277,6 +289,14 @@ sealed class SettingsWindow : Window
         };
         panel.Children.Add(Row("Format", _format));
 
+        panel.Children.Add(Heading("Recordings"));
+        _videoFolderBox = new TextBox { Text = _s.VideoFolder, IsReadOnly = true, MinWidth = 200 };
+        var videoBrowse = new Button { Content = "Browse…" };
+        videoBrowse.Click += async (_, _) => await BrowseFolderAsync(path => _s.VideoFolder = path, _videoFolderBox);
+        var videoOpen = new Button { Content = "Open" };
+        videoOpen.Click += (_, _) => OpenChosenFolder(_s.VideoFolder);
+        panel.Children.Add(Row("Folder", FolderControls(_videoFolderBox, videoBrowse, videoOpen)));
+
         panel.Children.Add(Heading("Organizing"));
         _monthly = Check("Sort into monthly subfolders", _s.MonthlyFolders, v => _s.MonthlyFolders = v);
         panel.Children.Add(_monthly);
@@ -285,10 +305,109 @@ sealed class SettingsWindow : Window
         {
             _autoSave.IsChecked = _s.AutoSave;
             _folderBox.Text = _s.SaveFolder;
+            _videoFolderBox.Text = _s.VideoFolder;
             _format.SelectedIndex = string.Equals(_s.SaveFormat, "jpg", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             _monthly.IsChecked = _s.MonthlyFolders;
         });
         return panel;
+    }
+
+    Control BuildRecording()
+    {
+        var panel = Page("Recording");
+        panel.Children.Add(Heading("Sound"));
+        _systemAudio = Check("Record system sound", _s.RecordSystemAudio, v => _s.RecordSystemAudio = v);
+        panel.Children.Add(_systemAudio);
+        _recordMic = Check("Record my microphone", _s.RecordMicrophone, v =>
+        {
+            _s.RecordMicrophone = v;
+            if (_micBox != null) _micBox.IsEnabled = v;
+        });
+        panel.Children.Add(_recordMic);
+
+        _micBox = new ComboBox { MinWidth = 220, IsEnabled = _s.RecordMicrophone };
+        FillMics();
+        _micBox.SelectionChanged += (_, _) =>
+        {
+            if (_filling || _micBox.SelectedItem is not MicItem item) return;
+            _s.MicrophoneDevice = item.Id;
+            Save();
+        };
+        panel.Children.Add(Row("Microphone", _micBox));
+
+        panel.Children.Add(Heading("Video"));
+        _fps = IntCombo(_s.RecordFramerate, new[] { 30, 60 }, n => $"{n} fps", v => _s.RecordFramerate = v);
+        panel.Children.Add(Row("Frame rate", _fps));
+
+        _quality = new ComboBox
+        {
+            ItemsSource = new[] { "High", "Standard" },
+            SelectedIndex = _s.RecordHighQuality ? 0 : 1,
+            MinWidth = 160,
+        };
+        _quality.SelectionChanged += (_, _) =>
+        {
+            if (_filling || _quality.SelectedIndex < 0) return;
+            _s.RecordHighQuality = _quality.SelectedIndex == 0;
+            Save();
+        };
+        panel.Children.Add(Row("Quality", _quality));
+
+        _recordCursor = Check("Show the mouse cursor", _s.RecordCursor, v => _s.RecordCursor = v);
+        panel.Children.Add(_recordCursor);
+        _recordCountdown = Check("Count down before recording", _s.RecordCountdown, v => _s.RecordCountdown = v);
+        panel.Children.Add(_recordCountdown);
+        _copyVideo = Check("Copy the video to the clipboard", _s.CopyRecordingToClipboard, v => _s.CopyRecordingToClipboard = v);
+        panel.Children.Add(_copyVideo);
+
+        _refresh.Add(() =>
+        {
+            _filling = true;
+            _systemAudio.IsChecked = _s.RecordSystemAudio;
+            _recordMic.IsChecked = _s.RecordMicrophone;
+            _micBox.IsEnabled = _s.RecordMicrophone;
+            FillMics();
+            SetComboValue(_fps, _s.RecordFramerate);
+            _quality.SelectedIndex = _s.RecordHighQuality ? 0 : 1;
+            _recordCursor.IsChecked = _s.RecordCursor;
+            _recordCountdown.IsChecked = _s.RecordCountdown;
+            _copyVideo.IsChecked = _s.CopyRecordingToClipboard;
+            _filling = false;
+        });
+
+        _ = LoadMicrophonesAsync();
+        return panel;
+    }
+
+    async Task LoadMicrophonesAsync()
+    {
+        AudioDevices audio;
+        try { audio = await Task.Run(AudioDevices.Discover); }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            return;
+        }
+        if (!IsVisible && _micBox == null) return;
+        var items = new List<MicItem> { new("", "Default") };
+        foreach (var mic in audio.Microphones)
+            items.Add(new MicItem(mic.Name, mic.Description));
+        _mics = items;
+        if (!_mics.Any(item => item.Id == _s.MicrophoneDevice)) _s.MicrophoneDevice = "";
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_micBox == null) return;
+            _filling = true;
+            FillMics();
+            _filling = false;
+        });
+    }
+
+    void FillMics()
+    {
+        _micBox.ItemsSource = _mics.ToList();
+        int index = _mics.FindIndex(item => item.Id == _s.MicrophoneDevice);
+        _micBox.SelectedIndex = index >= 0 ? index : 0;
     }
 
     Control BuildShortcuts()
@@ -322,6 +441,7 @@ sealed class SettingsWindow : Window
             panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
             panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
             panel.Children.Add(CommandRow("Pin clipboard image", PlatformInfo.Command("--pin")));
+            panel.Children.Add(CommandRow("Record video", PlatformInfo.Command("--record")));
         }
 
         return panel;
@@ -413,6 +533,15 @@ sealed class SettingsWindow : Window
         _s.PreviewSeconds = 6;
         _s.ShowMagnifier = true;
         _s.DelaySeconds = 3;
+        _s.VideoFolder = SettingsDefaults.DefaultVideoFolder;
+        _s.RecordSystemAudio = true;
+        _s.RecordMicrophone = false;
+        _s.MicrophoneDevice = "";
+        _s.RecordFramerate = 30;
+        _s.RecordHighQuality = true;
+        _s.RecordCursor = true;
+        _s.RecordCountdown = true;
+        _s.CopyRecordingToClipboard = true;
         _s.SnipHotkey = "Win+Shift+S";
         _s.DelayHotkey = "";
         _s.RepeatHotkey = "";
@@ -421,7 +550,9 @@ sealed class SettingsWindow : Window
         foreach (var refresh in _refresh) refresh();
     }
 
-    async Task BrowseFolderAsync()
+    async Task BrowseFolderAsync() => await BrowseFolderAsync(path => _s.SaveFolder = path, _folderBox);
+
+    async Task BrowseFolderAsync(Action<string> set, TextBox box)
     {
         try
         {
@@ -433,8 +564,8 @@ sealed class SettingsWindow : Window
             if (result.Count == 0) return;
             var local = result[0].TryGetLocalPath();
             if (string.IsNullOrEmpty(local)) return;
-            _s.SaveFolder = local;
-            _folderBox.Text = local;
+            set(local);
+            box.Text = local;
             Save();
         }
         catch (Exception ex)
@@ -443,11 +574,13 @@ sealed class SettingsWindow : Window
         }
     }
 
-    void OpenFolder()
+    void OpenFolder() => OpenChosenFolder(_s.SaveFolder);
+
+    void OpenChosenFolder(string root)
     {
         try
         {
-            string folder = _s.FolderFor(_s.SaveFolder);
+            string folder = _s.FolderFor(root);
             Directory.CreateDirectory(folder);
             PlatformInfo.Open(folder);
         }
@@ -455,6 +588,35 @@ sealed class SettingsWindow : Window
         {
             _ = MessageDialog.AlertAsync(this, "Could not open the folder: " + ex.Message);
         }
+    }
+
+    static Grid FolderControls(TextBox box, Button browse, Button open)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnSpacing = 8,
+        };
+        grid.Children.Add(box);
+        Grid.SetColumn(box, 0);
+        grid.Children.Add(browse);
+        Grid.SetColumn(browse, 1);
+        grid.Children.Add(open);
+        Grid.SetColumn(open, 2);
+        return grid;
+    }
+
+    sealed class MicItem
+    {
+        public MicItem(string id, string label)
+        {
+            Id = id ?? "";
+            Label = string.IsNullOrWhiteSpace(label) ? "Default" : label;
+        }
+
+        public string Id { get; }
+        public string Label { get; }
+        public override string ToString() => Label;
     }
 
     void Save()

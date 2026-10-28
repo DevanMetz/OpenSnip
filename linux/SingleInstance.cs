@@ -31,6 +31,7 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
             LaunchAction.SnipDelay => "snip-delay",
             LaunchAction.Repeat => "repeat",
             LaunchAction.Settings => "settings",
+            LaunchAction.Record => "record",
             _ => "snip",
         };
     }
@@ -40,6 +41,7 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
         "snip-delay" => LaunchAction.SnipDelay,
         "repeat" => LaunchAction.Repeat,
         "settings" => LaunchAction.Settings,
+        "record" => LaunchAction.Record,
         "pin" => LaunchAction.Pin,
         _ => LaunchAction.Snip,
     };

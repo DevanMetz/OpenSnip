@@ -14,7 +14,7 @@ sealed class OverlayWindow : Window
     readonly PixelRect _virtualBounds;
     readonly CaptureCanvas _canvas;
 
-    public OverlayWindow(CapturedFrame frame, Settings settings, PixelRect[] windows = null)
+    public OverlayWindow(CapturedFrame frame, Settings settings, PixelRect[] windows = null, bool record = false)
     {
         var screens = Screens.All;
         PixelRect union = screens.Count > 0 ? screens[0].Bounds : new PixelRect(0, 0, frame.Width, frame.Height);
@@ -38,7 +38,7 @@ sealed class OverlayWindow : Window
         Width = Math.Max(1, union.Width / scale);
         Height = Math.Max(1, union.Height / scale);
 
-        _canvas = new CaptureCanvas(frame, settings, union, windows, Complete);
+        _canvas = new CaptureCanvas(frame, settings, union, windows, Complete, record);
         Content = _canvas;
         Closed += (_, _) => _result.TrySetResult(null);
     }
@@ -84,6 +84,9 @@ sealed class CaptureCanvas : Control
     readonly bool _windowsAlign;
     readonly Action<PixelRect?> _complete;
     readonly Typeface _typeface = new("Inter");
+    readonly bool _record;
+    readonly IPen _framePen;
+    readonly IPen _hairPen;
 
     bool _pressing;
     bool _dragging;
@@ -97,10 +100,8 @@ sealed class CaptureCanvas : Control
 
     static readonly IBrush DimBrush = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
     static readonly IBrush ReadoutBrush = new SolidColorBrush(Color.FromArgb(238, 38, 38, 44));
-    static readonly IPen AccentPen = new Pen(AppTheme.Accent, 2);
-    static readonly IPen CrosshairPen = new Pen(AppTheme.Accent, 1);
 
-    public CaptureCanvas(CapturedFrame frame, Settings settings, PixelRect virtualBounds, PixelRect[] windows, Action<PixelRect?> complete)
+    public CaptureCanvas(CapturedFrame frame, Settings settings, PixelRect virtualBounds, PixelRect[] windows, Action<PixelRect?> complete, bool record = false)
     {
         _frame = frame;
         _bitmap = frame.ToBitmap();
@@ -109,6 +110,10 @@ sealed class CaptureCanvas : Control
         _windows = windows ?? Array.Empty<PixelRect>();
         _windowsAlign = frame.Width == virtualBounds.Width && frame.Height == virtualBounds.Height;
         _complete = complete;
+        _record = record;
+        var color = record ? AppTheme.Record : AppTheme.Accent;
+        _framePen = new Pen(color, 2);
+        _hairPen = new Pen(color, 1);
         Focusable = true;
         ClipToBounds = true;
     }
@@ -125,6 +130,11 @@ sealed class CaptureCanvas : Control
                 else _complete(HitAt(CurrentCursor()).Image);
                 return true;
             case Key.A:
+                if (_record)
+                {
+                    _complete(ToImageRect(MonitorRect(CurrentCursor())));
+                    return true;
+                }
                 _pressing = false;
                 _dragging = false;
                 _selection = new Rect(0, 0, Bounds.Width, Bounds.Height);
@@ -133,6 +143,11 @@ sealed class CaptureCanvas : Control
                 InvalidateVisual();
                 return true;
             case Key.F:
+                if (_record)
+                {
+                    _complete(ToImageRect(MonitorRect(CurrentCursor())));
+                    return true;
+                }
                 _pressing = false;
                 _dragging = false;
                 _selection = MonitorRect(CurrentCursor());
@@ -371,7 +386,7 @@ sealed class CaptureCanvas : Control
             context.FillRectangle(DimBrush, bottom);
             context.FillRectangle(DimBrush, left);
             context.FillRectangle(DimBrush, right);
-            context.DrawRectangle(null, AccentPen, selection);
+            context.DrawRectangle(null, _framePen, selection);
             readout = DrawReadout(context, selection, _selection == null ? _hoverImage : null);
         }
         else
@@ -383,8 +398,8 @@ sealed class CaptureCanvas : Control
         {
             if (_keyboardCursor)
             {
-                context.DrawLine(CrosshairPen, new Point(_cursor.X - 8, _cursor.Y), new Point(_cursor.X + 8, _cursor.Y));
-                context.DrawLine(CrosshairPen, new Point(_cursor.X, _cursor.Y - 8), new Point(_cursor.X, _cursor.Y + 8));
+                context.DrawLine(_hairPen, new Point(_cursor.X - 8, _cursor.Y), new Point(_cursor.X + 8, _cursor.Y));
+                context.DrawLine(_hairPen, new Point(_cursor.X, _cursor.Y - 8), new Point(_cursor.X, _cursor.Y + 8));
             }
             if (_settings.ShowMagnifier) DrawMagnifier(context, readout);
         }
@@ -493,7 +508,7 @@ sealed class CaptureCanvas : Control
         double squareX = box.X + (boxW - square) / 2;
         var dest = new Rect(squareX + pad, box.Y + pad, inner, inner);
 
-        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(box.X, box.Y, boxW, square + labelHeight), 7, 7);
+        context.DrawRectangle(ReadoutBrush, _framePen, new Rect(box.X, box.Y, boxW, square + labelHeight), 7, 7);
 
         // Keep the source centered on the cursor. Clamping it used to slide the
         // crosshair off the real pixel once the cursor reached the screen edge.
@@ -518,8 +533,8 @@ sealed class CaptureCanvas : Control
 
         double cx = dest.X + (imageX - left + 0.5) * scale;
         double cy = dest.Y + (imageY - top + 0.5) * scale;
-        context.DrawLine(CrosshairPen, new Point(cx - 7, cy), new Point(cx + 7, cy));
-        context.DrawLine(CrosshairPen, new Point(cx, cy - 7), new Point(cx, cy + 7));
+        context.DrawLine(_hairPen, new Point(cx - 7, cy), new Point(cx + 7, cy));
+        context.DrawLine(_hairPen, new Point(cx, cy - 7), new Point(cx, cy + 7));
 
         context.DrawText(label, new Point(box.X + (boxW - label.Width) / 2, box.Y + square + 2));
     }

@@ -7,6 +7,7 @@ enum LaunchAction
     SnipDelay,
     Repeat,
     Settings,
+    Record,
     Pin,
     Edit,
 }
@@ -30,7 +31,7 @@ static class Cli
         "OpenSnip " + Version + "\n" +
         "\n" +
         "Usage:\n" +
-        "  OpenSnip [--snip] [--snip-delay] [--repeat] [--settings] [--pin [file]]\n" +
+        "  OpenSnip [--snip] [--snip-delay] [--repeat] [--record] [--settings] [--pin [file]]\n" +
         "  OpenSnip --edit <file>\n" +
         "  OpenSnip --capture <file.png>\n" +
         "  OpenSnip --diagnostics [file]\n" +
@@ -40,6 +41,7 @@ static class Cli
         "  --snip              Capture a region now; starts OpenSnip if needed.\n" +
         "  --snip-delay        Capture after the configured delay.\n" +
         "  --repeat            Capture the last region again.\n" +
+        "  --record            Record a region; starts OpenSnip if needed.\n" +
         "  --settings          Open settings; starts OpenSnip if needed.\n" +
         "  --pin [file]        Pin the clipboard image, or a file, on screen.\n" +
         "  --edit <file>       Open an image in the editor.\n" +
@@ -72,6 +74,9 @@ static class Cli
                     break;
                 case "--repeat":
                     action = MergeAction(action, LaunchAction.Repeat);
+                    break;
+                case "--record":
+                    action = MergeAction(action, LaunchAction.Record);
                     break;
                 case "--settings":
                     action = MergeAction(action, LaunchAction.Settings);
