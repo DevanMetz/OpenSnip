@@ -191,7 +191,7 @@ sealed class App : Application
             if (delaySeconds > 0) await CountdownWindow.RunAsync(delaySeconds);
 
             var frame = await CaptureService.CaptureAsync();
-            var overlay = new OverlayWindow(frame, Settings);
+            var overlay = new OverlayWindow(frame, Settings, WindowsFor(frame));
             var region = await overlay.SelectAsync();
             if (region is not { } selected) return;
 
@@ -255,6 +255,14 @@ sealed class App : Application
             _busy = false;
             if (fallback) StartSnip();
         }
+    }
+
+    static PixelRect[] WindowsFor(CapturedFrame frame)
+    {
+        // Rectangles are root-window pixels, so they only match a full-root capture.
+        var snap = X11Windows.TrySnapshot();
+        if (snap == null || snap.Width != frame.Width || snap.Height != frame.Height) return null;
+        return snap.Windows;
     }
 
     async Task DeliverAsync(CapturedFrame frame)

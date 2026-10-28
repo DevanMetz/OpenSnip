@@ -46,6 +46,23 @@ sealed class CapturedFrame
     public byte[] EncodePng() => Encode(SKEncodedImageFormat.Png, 100);
     public byte[] EncodeJpeg() => Encode(SKEncodedImageFormat.Jpeg, 92);
 
+    public bool TryGetRgb(int x, int y, out byte r, out byte g, out byte b)
+    {
+        r = g = b = 0;
+        if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
+        int i = (y * Width + x) * 4;
+        b = Bgra[i];
+        g = Bgra[i + 1];
+        r = Bgra[i + 2];
+        return true;
+    }
+
+    public string ColorLabel(int x, int y)
+    {
+        if (!TryGetRgb(x, y, out byte r, out byte g, out byte b)) return $"{x}, {y}";
+        return $"{x}, {y}  #{r:X2}{g:X2}{b:X2}";
+    }
+
     byte[] Encode(SKEncodedImageFormat format, int quality)
     {
         using var bitmap = new SKBitmap(new SKImageInfo(Width, Height, SKColorType.Bgra8888, SKAlphaType.Opaque));
