@@ -34,6 +34,10 @@ static class Diagnostics
         report.AppendLine("Microphones: " + (audio.Microphones.Count == 0
             ? "none"
             : string.Join(", ", audio.Microphones.Select(mic => mic.Description))));
+        var settings = Settings.Load();
+        SettingsDefaults.ApplyLinux(settings);
+        string shortcuts = X11HotkeyService.IsSupported ? HotkeyBindings.From(settings).Summary : "off";
+        report.AppendLine("Global shortcuts: " + shortcuts);
         report.AppendLine("Settings: " + ConfigPaths.Dir);
 
         string text = report.ToString();

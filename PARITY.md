@@ -10,23 +10,23 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 |---|---|---|
 | Region snip on a frozen screen | working | `linux/Capture.cs`, `linux/OverlayWindow.cs` |
 | Click grabs the monitor | working | `linux/OverlayWindow.cs` |
-| Click grabs the window under the cursor | missing | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
+| Click grabs the window under the cursor | partial. X11 only | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
 | `F` selects the monitor | partial. Sets the selection; Enter or the mouse confirms. Windows completes immediately. While recording, `F` completes the monitor. | `linux/OverlayWindow.cs` |
 | `A` selects all monitors | partial. Same as `F` for a snip. While recording, `A` completes the one monitor under the cursor. | `linux/OverlayWindow.cs` |
 | Enter confirms, arrows nudge, Esc and right-click cancel | working | `linux/OverlayWindow.cs` |
 | Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
-| Magnifier color | missing | `linux/OverlayWindow.cs` |
+| Magnifier color | working | `linux/OverlayWindow.cs` |
 | X11 capture | working | `linux/Capture.cs` |
 | Wayland capture (portal screenshot) | working | `linux/Capture.cs`, `linux/DBus.cs` |
 | Copy PNG to the clipboard | working. `xclip` on X11, `wl-copy` on Wayland, then Avalonia. | `linux/ClipboardService.cs` |
 | Auto-save PNG or JPG | working | `linux/CapturedFrame.cs`, `linux/SettingsWindow.cs` |
 | Monthly folders | working | `src/Settings.cs` |
 | Preview thumbnail | working | `linux/ThumbnailWindow.cs` |
-| Click the preview to annotate | partial. Click opens the file with `xdg-open`. The editor is Windows-only. | `linux/ThumbnailWindow.cs` |
-| Drag the preview into another app | missing | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
-| Annotation editor | missing | `src/EditorForm.cs` |
-| Open the editor after a snip | missing | `src/Settings.cs` |
-| Pin a snip, including from the clipboard | missing | `src/SmallWindows.cs` |
+| Click the preview to annotate | working | `linux/ThumbnailWindow.cs` |
+| Drag the preview into another app | working | `linux/ThumbnailWindow.cs`, `src/SmallWindows.cs` |
+| Annotation editor | working | `src/EditorForm.cs` |
+| Open the editor after a snip | working | `src/Settings.cs` |
+| Pin a snip, including from the clipboard | partial. Pin from clipboard or file; editor pin remains Windows-only | `src/SmallWindows.cs` |
 | Delayed snip | working | `linux/CountdownWindow.cs`, `linux/App.cs` |
 | Repeat the last region | working | `linux/App.cs` |
 
@@ -36,7 +36,7 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 |---|---|---|
 | Record a region to MP4 | working on X11. Tray **Record video** and `opensnip --record`. | `linux/App.cs`, `linux/RecordingSession.cs`, `linux/FramePump.cs` |
 | Wayland recording | missing. The portal ScreenCast API is not wired. The app reports that recording needs an X11 session. | `linux/App.cs` |
-| Record the window under the cursor | missing. Same gap as the snip window grab. | `linux/OverlayWindow.cs` |
+| Record the window under the cursor | working on X11. | `linux/OverlayWindow.cs` |
 | One monitor, even dimensions, 16 px minimum | working | `linux/RecordGeometry.cs` |
 | 3-2-1 countdown | working | `linux/RecordingChrome.cs` |
 | Red outline | working | `linux/RecordingChrome.cs` |
@@ -60,8 +60,8 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 
 | Feature | Linux | Files |
 |---|---|---|
-| `Win+Shift+S`, delay, repeat, Print Screen | missing. Bind `opensnip --snip`, `--snip-delay`, `--repeat`, and `--record` in the desktop. | `linux/Cli.cs`, `linux/SettingsWindow.cs` |
-| Settings pages for capture, saving, recording, shortcuts, general | working. Shortcuts lists commands instead of recording a key. | `linux/SettingsWindow.cs` |
+| `Win+Shift+S`, delay, repeat, Print Screen | working on X11. Bind commands in the desktop on Wayland. | `linux/Cli.cs`, `linux/SettingsWindow.cs` |
+| Settings pages for capture, saving, recording, shortcuts, general | working. Shortcuts supports X11 key bindings and lists commands on Wayland. | `linux/SettingsWindow.cs` |
 | Recording options: system sound, microphone, device, frame rate, quality, cursor, countdown, copy file | working | `linux/SettingsWindow.cs` |
 | Reset defaults, including the recording options and video folder | working | `linux/SettingsWindow.cs`, `linux/SettingsDefaults.cs` |
 | Start on login | working. XDG autostart. | `linux/Autostart.cs` |

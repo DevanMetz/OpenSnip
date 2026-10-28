@@ -115,9 +115,9 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 ## Linux
 
-The Linux app is a separate native Avalonia build. The annotation editor, pins, and built-in global shortcuts remain Windows-only. Screen recording works on X11 when `ffmpeg` is installed.
+The Linux app is a separate native Avalonia build. It covers screenshots, annotation, pinned images, global shortcuts and screen recording on X11.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; tray icon; settings; and X11 screen recording to MP4.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; pinned images (under the pointer on X11, centered on Wayland); tray icon; global shortcuts and MP4 recording on X11; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -129,35 +129,47 @@ cd OpenSnip-linux-x64
 
 The installer copies the binary to `~/.local/bin/opensnip`, so make sure `~/.local/bin` is on your `PATH`.
 
-**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support; `ffmpeg` for screen recording. A tray host is optional: without one, Settings opens on launch and closing it quits OpenSnip.
+**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support; `ffmpeg` for screen recording. A tray host is optional. Without one, Settings opens on launch and closing it quits OpenSnip, unless a pin or editor is still open. `opensnip --pin` opens only the pin, and `opensnip --edit file.png` opens only the editor.
 
 ### Shortcuts
 
-There are no built-in global shortcuts on Linux; bind your own in GNOME Settings → Keyboard → Custom Shortcuts, or KDE System Settings → Shortcuts. Use `opensnip --snip` for a normal snip, `opensnip --snip-delay` for a delayed one, `opensnip --repeat` to re-capture the last region, `opensnip --record` to record, and `opensnip --settings` to open settings.
+On X11, OpenSnip uses the same shortcuts as Windows. The defaults are `Win` + `Shift` + `S`, `PrtSc`, `Shift` + `PrtSc`, and `Ctrl` + `PrtSc`. Change them in **Settings → Shortcuts**. `Alt` + `PrtSc` and `Win` + `PrtSc` stay with the desktop, as does any chord the desktop already owns.
+
+Recording has no built-in global shortcut; bind `opensnip --record` in the desktop settings.
+
+On Wayland, bind `opensnip --snip`, `opensnip --snip-delay`, or `opensnip --repeat` in the desktop's shortcut settings. Use `opensnip --pin` to pin the clipboard image, `opensnip --pin file.png` to pin a file, `opensnip --edit file.png` to edit an image, and `opensnip --settings` to open settings.
 
 ### Selecting a region
 
 | Input | Action |
 |---|---|
 | Drag | Select a region |
-| Click | Grab the whole monitor under the cursor |
+| Click | Grab the highlighted window, or the monitor under the cursor |
 | `F` | Whole monitor under the cursor |
 | `A` | All monitors |
 | `Enter` | Grab what's selected |
 | Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
 | `Esc` / right-click | Cancel |
 
+On X11 the outline follows the window under the pointer. On Wayland a click grabs the monitor.
+
 While recording, `F` and `A` record the monitor under the cursor. A recording stays on that one monitor.
 
 ### Screen recording
 
 Choose **Record video** in the tray, or run `opensnip --record`, then pick a region the same way as a snip. On X11, `ffmpeg` writes an H.264 MP4. A red outline and a bar (pause, microphone, stop, discard) stay on screen and are left out of the file. Videos go to `~/Videos/OpenSnip`. Wayland sessions do not record.
+### Annotating
+
+Click the preview to annotate, or drag it to drop the file. The tray command **Open image in editor…** and `opensnip --edit file.png` open an existing image. Settings can open the editor instead of the preview. Keys match the editor table above. Pin (`P`) is Windows-only. Edits are copied to the clipboard.
 
 ### Command line
 
 ```bash
 opensnip --record              # record a region (X11, needs ffmpeg)
+opensnip --pin                # pin the clipboard image
+opensnip --pin file.png       # pin a file
 opensnip --capture file.png   # capture the whole desktop without UI
+opensnip --edit file.png      # open an image in the editor
 opensnip --diagnostics [file] # print (and optionally write) a diagnostic report
 opensnip --help
 ```
@@ -215,9 +227,16 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `src/Imaging.cs` | Screen capture, window detection, clipboard, saving, icon |
 | `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
+| `linux/X11Windows.cs` | Top-level X11 windows for click-to-capture |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
 | `linux/RecordingSession.cs` | X11 recording, red outline, and control bar |
+| `linux/PinWindow.cs` | Linux pinned images |
+| `linux/Annotation.cs` | Annotation shapes for the Linux editor |
+| `linux/EditorWindow.cs` | Linux annotation editor |
 | `linux/SettingsWindow.cs` | Linux Settings window |
+| `linux/HotkeyChord.cs` | Shortcut parsing, matching, and grab planning |
+| `linux/X11Hotkeys.cs` | X11 global shortcuts |
+| `tests/OpenSnip.Tests` | Linux regression tests (capture, window detection, images, command line) |
 
 ## License
 
