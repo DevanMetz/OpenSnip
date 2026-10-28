@@ -37,15 +37,38 @@ static class Program
         if (options.CaptureFile != null)
             return CaptureCli.RunAsync(options.CaptureFile).GetAwaiter().GetResult();
 
+        string pinFile = null;
+        if (options.Action == LaunchAction.Pin && options.PinFile != null)
+        {
+            try { pinFile = Cli.ResolvePinPath(options.PinFile); }
+            catch (CliException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
+        string editFile = null;
+        if (options.EditFile != null)
+        {
+            try { editFile = Cli.ResolveEditPath(options.EditFile); }
+            catch (CliException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
         if (!SingleInstance.TryStart())
         {
             var forwarded = options.Action == LaunchAction.None ? LaunchAction.Snip : options.Action;
-            if (SingleInstance.Send(forwarded, out string error)) return 0;
+            if (SingleInstance.Send(forwarded, forwarded == LaunchAction.Edit ? editFile : pinFile, out string error)) return 0;
             Console.Error.WriteLine("OpenSnip is already running but did not accept the command: " + error);
             return 1;
         }
 
         App.StartupAction = options.Action;
+        App.StartupArgument = options.Action == LaunchAction.Edit ? editFile : pinFile;
         try
         {
             return AppBuilder.Configure<App>()
