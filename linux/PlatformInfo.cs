@@ -102,14 +102,7 @@ static class PlatformInfo
         return false;
     }
 
-    public static bool LibX11Available
-    {
-        get
-        {
-            try { return NativeLibrary.TryLoad("libX11.so.6", out _) || NativeLibrary.TryLoad("libX11", out _); }
-            catch { return false; }
-        }
-    }
+    public static bool LibX11Available => X11Library.Available;
 
     public static void Open(string target)
     {

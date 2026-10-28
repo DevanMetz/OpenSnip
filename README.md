@@ -117,7 +117,7 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 The Linux app is a separate native Avalonia build. It covers screenshots and annotation; recording, pins and built-in global shortcuts remain Windows-only.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; tray icon; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; tray icon; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -140,12 +140,14 @@ There are no built-in global shortcuts on Linux; bind your own in GNOME Settings
 | Input | Action |
 |---|---|
 | Drag | Select a region |
-| Click | Grab the whole monitor under the cursor |
+| Click | Grab the highlighted window, or the monitor under the cursor |
 | `F` | Whole monitor under the cursor |
 | `A` | All monitors |
 | `Enter` | Grab what's selected |
 | Arrow keys | Nudge the cursor 1 px (`Shift` for 10 px) |
 | `Esc` / right-click | Cancel |
+
+On X11 the outline follows the window under the pointer. On Wayland a click grabs the monitor.
 
 ### Annotating
 
@@ -212,10 +214,12 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `src/Imaging.cs` | Screen capture, window detection, clipboard, saving, icon |
 | `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
+| `linux/X11Windows.cs` | Top-level X11 windows for click-to-capture |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
 | `linux/Annotation.cs` | Annotation shapes for the Linux editor |
 | `linux/EditorWindow.cs` | Linux annotation editor |
 | `linux/SettingsWindow.cs` | Linux Settings window |
+| `tests/OpenSnip.Tests` | Linux regression tests (capture, window detection, images, command line) |
 
 ## License
 

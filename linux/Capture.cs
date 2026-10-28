@@ -144,12 +144,25 @@ sealed class ExternalCaptureBackend : ICaptureBackend
 
 sealed class X11CaptureBackend : ICaptureBackend
 {
-    const string X11 = "libX11";
+    const string X11 = X11Library.ImportName;
     const int ZPixmap = 2;
     const ulong AllPlanes = ~0UL;
 
     public string Name => "libX11 (native)";
-    public bool IsAvailable => PlatformInfo.HasDisplay && !PlatformInfo.IsWayland && PlatformInfo.LibX11Available;
+    public bool IsAvailable => PlatformInfo.HasDisplay && !PlatformInfo.IsWayland && X11Library.Available;
+
+    /// <summary>Calls into libX11. False when the import still cannot see the installed library.</summary>
+    internal static bool NativeLibraryLoads()
+    {
+        try
+        {
+            var display = XOpenDisplay(":99");
+            if (display != IntPtr.Zero) XCloseDisplay(display);
+            return true;
+        }
+        catch (DllNotFoundException) { return false; }
+        catch (EntryPointNotFoundException) { return false; }
+    }
 
     public Task<CapturedFrame> CaptureAsync() => Task.Run(Capture);
 
