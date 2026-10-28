@@ -75,8 +75,17 @@ sealed class CapturedFrame
 
     public void Save(string path, string format)
     {
-        var bytes = string.Equals(format, "jpg", StringComparison.OrdinalIgnoreCase) ? EncodeJpeg() : EncodePng();
+        var bytes = IsJpeg(format) ? EncodeJpeg() : EncodePng();
         File.WriteAllBytes(path, bytes);
+    }
+
+    public static bool IsJpeg(string format)
+    {
+        if (string.IsNullOrWhiteSpace(format)) return false;
+        format = format.Trim();
+        if (format.StartsWith('.')) format = format[1..];
+        return format.Equals("jpg", StringComparison.OrdinalIgnoreCase)
+            || format.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
     }
 
     public static CapturedFrame DecodeFile(string path)

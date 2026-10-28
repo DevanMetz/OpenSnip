@@ -20,7 +20,7 @@ sealed class X11WindowList
 
 static class X11Windows
 {
-    const string Lib = "libX11.so.6";
+    const string Lib = X11Library.ImportName;
     const int IsViewable = 2;
     const int InputOnly = 2;
     const int Success = 0;

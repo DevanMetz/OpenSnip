@@ -212,7 +212,7 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/X11Windows.cs` | Top-level X11 windows for click-to-capture |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
 | `linux/SettingsWindow.cs` | Linux Settings window |
-| `tests/OpenSnip.Tests` | Linux regression tests |
+| `tests/OpenSnip.Tests` | Linux regression tests (capture, window detection, images, command line) |
 
 ## License
 
