@@ -47,16 +47,27 @@ static class Program
             }
         }
 
+        string editFile = null;
+        if (options.EditFile != null)
+        {
+            try { editFile = Cli.ResolveEditPath(options.EditFile); }
+            catch (CliException ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+
         if (!SingleInstance.TryStart())
         {
             var forwarded = options.Action == LaunchAction.None ? LaunchAction.Snip : options.Action;
-            if (SingleInstance.Send(forwarded, pinFile, out string error)) return 0;
+            if (SingleInstance.Send(forwarded, forwarded == LaunchAction.Edit ? editFile : pinFile, out string error)) return 0;
             Console.Error.WriteLine("OpenSnip is already running but did not accept the command: " + error);
             return 1;
         }
 
         App.StartupAction = options.Action;
-        App.StartupArgument = pinFile;
+        App.StartupArgument = options.Action == LaunchAction.Edit ? editFile : pinFile;
         try
         {
             return AppBuilder.Configure<App>()

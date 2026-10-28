@@ -14,7 +14,7 @@ sealed class OverlayWindow : Window
     readonly PixelRect _virtualBounds;
     readonly CaptureCanvas _canvas;
 
-    public OverlayWindow(CapturedFrame frame, Settings settings)
+    public OverlayWindow(CapturedFrame frame, Settings settings, PixelRect[] windows = null)
     {
         var screens = Screens.All;
         PixelRect union = screens.Count > 0 ? screens[0].Bounds : new PixelRect(0, 0, frame.Width, frame.Height);
@@ -38,7 +38,7 @@ sealed class OverlayWindow : Window
         Width = Math.Max(1, union.Width / scale);
         Height = Math.Max(1, union.Height / scale);
 
-        _canvas = new CaptureCanvas(frame, settings, union, Complete);
+        _canvas = new CaptureCanvas(frame, settings, union, windows, Complete);
         Content = _canvas;
         Closed += (_, _) => _result.TrySetResult(null);
     }
@@ -80,28 +80,34 @@ sealed class CaptureCanvas : Control
     readonly Bitmap _bitmap;
     readonly Settings _settings;
     readonly PixelRect _virtualBounds;
+    readonly PixelRect[] _windows;
+    readonly bool _windowsAlign;
     readonly Action<PixelRect?> _complete;
     readonly Typeface _typeface = new("Inter");
 
+    bool _pressing;
     bool _dragging;
     bool _hasPointer;
     bool _keyboardCursor;
     Point _start;
-    Point _end;
     Point _cursor;
     Rect? _selection;
+    Rect? _hoverLocal;
+    PixelRect? _hoverImage;
 
     static readonly IBrush DimBrush = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
     static readonly IBrush ReadoutBrush = new SolidColorBrush(Color.FromArgb(238, 38, 38, 44));
     static readonly IPen AccentPen = new Pen(AppTheme.Accent, 2);
     static readonly IPen CrosshairPen = new Pen(AppTheme.Accent, 1);
 
-    public CaptureCanvas(CapturedFrame frame, Settings settings, PixelRect virtualBounds, Action<PixelRect?> complete)
+    public CaptureCanvas(CapturedFrame frame, Settings settings, PixelRect virtualBounds, PixelRect[] windows, Action<PixelRect?> complete)
     {
         _frame = frame;
         _bitmap = frame.ToBitmap();
         _settings = settings;
         _virtualBounds = virtualBounds;
+        _windows = windows ?? Array.Empty<PixelRect>();
+        _windowsAlign = frame.Width == virtualBounds.Width && frame.Height == virtualBounds.Height;
         _complete = complete;
         Focusable = true;
         ClipToBounds = true;
@@ -116,15 +122,21 @@ sealed class CaptureCanvas : Control
                 return true;
             case Key.Enter:
                 if (_selection is { } current) _complete(ToImageRect(current));
-                else _complete(MonitorAt(CurrentCursor()));
+                else _complete(HitAt(CurrentCursor()).Image);
                 return true;
             case Key.A:
+                _pressing = false;
+                _dragging = false;
                 _selection = new Rect(0, 0, Bounds.Width, Bounds.Height);
+                ClearHover();
                 _keyboardCursor = false;
                 InvalidateVisual();
                 return true;
             case Key.F:
+                _pressing = false;
+                _dragging = false;
                 _selection = MonitorRect(CurrentCursor());
+                ClearHover();
                 _keyboardCursor = false;
                 InvalidateVisual();
                 return true;
@@ -156,6 +168,8 @@ sealed class CaptureCanvas : Control
         _cursor = ClampPoint(_cursor + delta);
         if (_selection is { } current)
             _selection = ClampRect(current.Translate(delta));
+        else
+            UpdateHover(_cursor);
         _keyboardCursor = true;
         InvalidateVisual();
     }
@@ -173,11 +187,13 @@ sealed class CaptureCanvas : Control
         }
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
 
-        _dragging = true;
-        _start = _end = _cursor = ClampPoint(point);
+        _pressing = true;
+        _dragging = false;
+        _start = _cursor = ClampPoint(point);
         _hasPointer = true;
         _keyboardCursor = false;
         _selection = null;
+        UpdateHover(_cursor);
         e.Pointer.Capture(this);
         InvalidateVisual();
         e.Handled = true;
@@ -189,11 +205,20 @@ sealed class CaptureCanvas : Control
         var point = ClampPoint(e.GetPosition(this));
         _cursor = point;
         _hasPointer = true;
-        if (_dragging)
+        if (_pressing)
         {
-            _end = point;
-            var rect = RectFromPoints(_start, _end);
-            _selection = rect.Width >= 1 && rect.Height >= 1 ? rect : null;
+            var rect = RectFromPoints(_start, point);
+            if (rect.Width >= 3 || rect.Height >= 3)
+            {
+                _dragging = true;
+                _selection = rect.Width >= 1 && rect.Height >= 1 ? rect : null;
+                ClearHover();
+            }
+        }
+        else if (_selection == null)
+        {
+            _keyboardCursor = false;
+            UpdateHover(point);
         }
         InvalidateVisual();
     }
@@ -201,18 +226,18 @@ sealed class CaptureCanvas : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (!_dragging) return;
-        _dragging = false;
+        if (!_pressing) return;
+        _pressing = false;
         e.Pointer.Capture(null);
         var point = ClampPoint(e.GetPosition(this));
         _cursor = point;
-        var rect = RectFromPoints(_start, point);
-        if (rect.Width < 3 && rect.Height < 3)
+        if (!_dragging)
         {
-            _complete(MonitorAt(point));
+            _complete(HitAt(point).Image);
             return;
         }
-        _complete(ToImageRect(rect));
+        _dragging = false;
+        _complete(ToImageRect(RectFromPoints(_start, point)));
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -264,10 +289,53 @@ sealed class CaptureCanvas : Control
             screen.Bounds.Height * sy);
     }
 
-    PixelRect MonitorAt(Point local)
+    readonly struct ScreenHit
     {
-        var rect = MonitorRect(local);
-        return ToImageRect(rect);
+        public PixelRect Image { get; init; }
+        public Rect Local { get; init; }
+    }
+
+    ScreenHit HitAt(Point local)
+    {
+        if (_windowsAlign)
+        {
+            int x = ImageCoord(local.X, Bounds.Width, _frame.Width);
+            int y = ImageCoord(local.Y, Bounds.Height, _frame.Height);
+            var window = WindowHit.At(_windows, x, y, _frame.Width, _frame.Height);
+            if (window is { } rect)
+                return new ScreenHit { Image = rect, Local = ImageToLocal(rect) };
+        }
+        var monitor = MonitorRect(local);
+        return new ScreenHit { Image = ToImageRect(monitor), Local = monitor };
+    }
+
+    void UpdateHover(Point local)
+    {
+        var hit = HitAt(local);
+        _hoverImage = hit.Image;
+        _hoverLocal = hit.Local;
+    }
+
+    void ClearHover()
+    {
+        _hoverImage = null;
+        _hoverLocal = null;
+    }
+
+    Rect ImageToLocal(PixelRect rect)
+    {
+        double sx = Bounds.Width / Math.Max(1, _frame.Width);
+        double sy = Bounds.Height / Math.Max(1, _frame.Height);
+        return new Rect(rect.X * sx, rect.Y * sy, rect.Width * sx, rect.Height * sy);
+    }
+
+    static int ImageCoord(double local, double localSpan, int imageSpan)
+    {
+        if (localSpan <= 0 || imageSpan <= 0) return 0;
+        int value = (int)Math.Floor(local * imageSpan / localSpan);
+        if (value < 0) return 0;
+        if (value >= imageSpan) return imageSpan - 1;
+        return value;
     }
 
     PixelRect ToImageRect(Rect local)
@@ -292,7 +360,8 @@ sealed class CaptureCanvas : Control
         context.DrawImage(_bitmap, bounds);
 
         Rect? readout = null;
-        if (_selection is { } selection)
+        var active = _selection ?? _hoverLocal;
+        if (active is { } selection)
         {
             var top = new Rect(0, 0, Bounds.Width, Math.Max(0, selection.Y));
             var bottom = new Rect(0, Math.Max(0, selection.Bottom), Bounds.Width, Math.Max(0, Bounds.Height - selection.Bottom));
@@ -303,7 +372,7 @@ sealed class CaptureCanvas : Control
             context.FillRectangle(DimBrush, left);
             context.FillRectangle(DimBrush, right);
             context.DrawRectangle(null, AccentPen, selection);
-            readout = DrawReadout(context, selection);
+            readout = DrawReadout(context, selection, _selection == null ? _hoverImage : null);
         }
         else
         {
@@ -321,12 +390,22 @@ sealed class CaptureCanvas : Control
         }
     }
 
-    Rect DrawReadout(DrawingContext context, Rect selection)
+    Rect DrawReadout(DrawingContext context, Rect selection, PixelRect? exact)
     {
-        double sx = _frame.Width / Math.Max(1, Bounds.Width);
-        double sy = _frame.Height / Math.Max(1, Bounds.Height);
-        int width = Math.Max(1, (int)Math.Round(selection.Width * sx));
-        int height = Math.Max(1, (int)Math.Round(selection.Height * sy));
+        int width;
+        int height;
+        if (exact is { } pixels)
+        {
+            width = Math.Max(1, pixels.Width);
+            height = Math.Max(1, pixels.Height);
+        }
+        else
+        {
+            double sx = _frame.Width / Math.Max(1, Bounds.Width);
+            double sy = _frame.Height / Math.Max(1, Bounds.Height);
+            width = Math.Max(1, (int)Math.Round(selection.Width * sx));
+            height = Math.Max(1, (int)Math.Round(selection.Height * sy));
+        }
         var text = new FormattedText($"{width} × {height}", CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, _typeface, 13, AppTheme.Text);
         const double padX = 9, padY = 5;
@@ -400,31 +479,48 @@ sealed class CaptureCanvas : Control
     {
         const double inner = 104;
         const double pad = 3;
-        const double labelHeight = 20;
-        double total = inner + pad * 2;
-        var box = PlaceMagnifier(total, total + labelHeight, readout);
-        double x = box.X;
-        double y = box.Y;
+        const double labelHeight = 22;
+        const int sourceSize = 24;
 
-        int imageX = Math.Clamp((int)(_cursor.X * _frame.Width / Math.Max(1, Bounds.Width)), 0, _frame.Width - 1);
-        int imageY = Math.Clamp((int)(_cursor.Y * _frame.Height / Math.Max(1, Bounds.Height)), 0, _frame.Height - 1);
-        int sourceSize = 24;
-        int left = Math.Clamp(imageX - sourceSize / 2, 0, Math.Max(0, _frame.Width - sourceSize));
-        int top = Math.Clamp(imageY - sourceSize / 2, 0, Math.Max(0, _frame.Height - sourceSize));
-        var source = new Rect(left, top, Math.Min(sourceSize, _frame.Width), Math.Min(sourceSize, _frame.Height));
-        var dest = new Rect(x + pad, y + pad, inner, inner);
-
-        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(x, y, total, total + labelHeight), 7, 7);
-        using (context.PushClip(dest))
-        {
-            context.DrawImage(_bitmap, source, dest);
-        }
-        var center = dest.Center;
-        context.DrawLine(CrosshairPen, new Point(center.X - 7, center.Y), new Point(center.X + 7, center.Y));
-        context.DrawLine(CrosshairPen, new Point(center.X, center.Y - 7), new Point(center.X, center.Y + 7));
-
-        var label = new FormattedText($"{imageX}, {imageY}", CultureInfo.InvariantCulture,
+        int imageX = ImageCoord(_cursor.X, Bounds.Width, _frame.Width);
+        int imageY = ImageCoord(_cursor.Y, Bounds.Height, _frame.Height);
+        var label = new FormattedText(_frame.ColorLabel(imageX, imageY), CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, _typeface, 11, AppTheme.Muted);
-        context.DrawText(label, new Point(x + (total - label.Width) / 2, y + total + 2));
+
+        double square = inner + pad * 2;
+        double boxW = Math.Max(square, label.Width + 16);
+        var box = PlaceMagnifier(boxW, square + labelHeight, readout);
+        double squareX = box.X + (boxW - square) / 2;
+        var dest = new Rect(squareX + pad, box.Y + pad, inner, inner);
+
+        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(box.X, box.Y, boxW, square + labelHeight), 7, 7);
+
+        // Keep the source centered on the cursor. Clamping it used to slide the
+        // crosshair off the real pixel once the cursor reached the screen edge.
+        int left = imageX - sourceSize / 2;
+        int top = imageY - sourceSize / 2;
+        int srcL = Math.Max(0, left);
+        int srcT = Math.Max(0, top);
+        int srcR = Math.Min(_frame.Width, left + sourceSize);
+        int srcB = Math.Min(_frame.Height, top + sourceSize);
+        double scale = inner / sourceSize;
+        if (srcR > srcL && srcB > srcT)
+        {
+            var source = new Rect(srcL, srcT, srcR - srcL, srcB - srcT);
+            var destPart = new Rect(
+                dest.X + (srcL - left) * scale,
+                dest.Y + (srcT - top) * scale,
+                (srcR - srcL) * scale,
+                (srcB - srcT) * scale);
+            using (context.PushClip(dest))
+                context.DrawImage(_bitmap, source, destPart);
+        }
+
+        double cx = dest.X + (imageX - left + 0.5) * scale;
+        double cy = dest.Y + (imageY - top + 0.5) * scale;
+        context.DrawLine(CrosshairPen, new Point(cx - 7, cy), new Point(cx + 7, cy));
+        context.DrawLine(CrosshairPen, new Point(cx, cy - 7), new Point(cx, cy + 7));
+
+        context.DrawText(label, new Point(box.X + (boxW - label.Width) / 2, box.Y + square + 2));
     }
 }

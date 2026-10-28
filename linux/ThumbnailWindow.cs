@@ -1,21 +1,26 @@
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
 namespace OpenSnip;
 
 sealed class ThumbnailWindow : Window
 {
-    readonly string _path;
+    readonly CapturedFrame _frame;
     readonly DispatcherTimer _timer;
+    string _path;
+    Point _press;
+    bool _pressed;
+    bool _dragged;
 
     public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds)
     {
+        _frame = frame;
         _path = savedPath;
         Title = "OpenSnip";
         Icon = IconLoader.Icon;
@@ -65,7 +70,14 @@ sealed class ThumbnailWindow : Window
             _timer.Start();
         };
         Closed += (_, _) => _timer.Stop();
+        PointerEntered += (_, _) => _timer.Stop();
+        PointerExited += (_, _) =>
+        {
+            if (!_dragged) _timer.Start();
+        };
         PointerPressed += OnPressed;
+        PointerMoved += OnMoved;
+        PointerReleased += OnReleased;
     }
 
     void PlaceBottomRight()
@@ -91,8 +103,85 @@ sealed class ThumbnailWindow : Window
             return;
         }
         if (!point.Properties.IsLeftButtonPressed) return;
-        if (!string.IsNullOrEmpty(_path) && File.Exists(_path)) PlatformInfo.Open(_path);
+        _pressed = true;
+        _dragged = false;
+        _press = e.GetPosition(this);
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    void OnMoved(object sender, PointerEventArgs e)
+    {
+        if (!_pressed || _dragged) return;
+        var point = e.GetPosition(this);
+        if (Math.Abs(point.X - _press.X) < 6 && Math.Abs(point.Y - _press.Y) < 6) return;
+        _pressed = false;
+        _dragged = true;
+        _timer.Stop();
+        StartDrag(e);
+    }
+
+    void OnReleased(object sender, PointerReleasedEventArgs e)
+    {
+        if (e.InitialPressMouseButton != MouseButton.Left) return;
+        e.Pointer.Capture(null);
+        if (!_pressed) return;
+        _pressed = false;
+        try { App.Instance?.OpenEditor(_frame); }
+        catch (Exception ex) { Log.Error(ex); }
         Close();
         e.Handled = true;
+    }
+
+    void StartDrag(PointerEventArgs e)
+    {
+        try
+        {
+            string path = EnsureDragFile();
+            var file = StorageProvider.TryGetFileFromPathAsync(path).GetAwaiter().GetResult();
+            if (file == null)
+            {
+                AbandonDrag();
+                return;
+            }
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.CreateFile(file));
+            _ = FinishDragAsync(e, data);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            AbandonDrag();
+        }
+    }
+
+    void AbandonDrag()
+    {
+        _dragged = false;
+        _timer.Start();
+    }
+
+    async Task FinishDragAsync(PointerEventArgs e, DataTransfer data)
+    {
+        try
+        {
+            var result = await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Copy);
+            if (result != DragDropEffects.None) Close();
+            else _timer.Start();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            _timer.Start();
+        }
+    }
+
+    string EnsureDragFile()
+    {
+        if (!string.IsNullOrEmpty(_path) && File.Exists(_path)) return _path;
+        string path = CapturedFrame.UniquePath(Path.Combine(Path.GetTempPath(), "OpenSnip"), "png");
+        _frame.Save(path, "png");
+        _path = path;
+        return path;
     }
 }

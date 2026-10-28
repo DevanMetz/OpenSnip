@@ -9,6 +9,8 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
     public static RemoteCommand Parse(string line)
     {
         line = (line ?? "").Trim();
+        if (line.StartsWith("edit ", StringComparison.Ordinal) || line.StartsWith("edit\t", StringComparison.Ordinal))
+            return new RemoteCommand(LaunchAction.Edit, line[5..].Trim());
         if (line.StartsWith("pin ", StringComparison.Ordinal) || line.StartsWith("pin\t", StringComparison.Ordinal))
         {
             string path = line[4..].Trim();
@@ -21,6 +23,7 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
     {
         if (argument != null && (argument.Contains('\n') || argument.Contains('\r')))
             throw new ArgumentException("Invalid path");
+        if (action == LaunchAction.Edit) return "edit " + (argument ?? "");
         if (action == LaunchAction.Pin)
             return string.IsNullOrEmpty(argument) ? "pin" : "pin " + argument;
         return action switch

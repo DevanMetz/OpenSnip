@@ -22,8 +22,11 @@ sealed class SettingsWindow : Window
     readonly List<Action> _refresh = new();
 
     CheckBox _copy;
-    CheckBox _preview;
+    RadioButton _preview;
+    RadioButton _editor;
+    RadioButton _nothing;
     ComboBox _previewSeconds;
+    bool _suppress;
     CheckBox _magnifier;
     ComboBox _delaySeconds;
     CheckBox _autoSave;
@@ -168,16 +171,28 @@ sealed class SettingsWindow : Window
         _copy = Check("Copy to the clipboard", _s.CopyToClipboard, v => _s.CopyToClipboard = v);
         panel.Children.Add(_copy);
 
-        _preview = Check("Show a small preview", _s.ShowThumbnail, v =>
-        {
-            _s.ShowThumbnail = v;
-            _previewSeconds.IsEnabled = v;
-        });
-        panel.Children.Add(_preview);
-
         _previewSeconds = IntCombo(_s.PreviewSeconds, new[] { 3, 6, 10, 20 },
             n => $"{n} seconds", v => _s.PreviewSeconds = v);
-        _previewSeconds.IsEnabled = _s.ShowThumbnail;
+        SetPreviewDelayEnabled(_s.ShowThumbnail && !_s.OpenEditorAfterSnip);
+
+        _preview = Radio("Show a small preview", _s.ShowThumbnail && !_s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = true;
+            _s.OpenEditorAfterSnip = false;
+        });
+        _editor = Radio("Open the editor", _s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = false;
+            _s.OpenEditorAfterSnip = true;
+        });
+        _nothing = Radio("Nothing else", !_s.ShowThumbnail && !_s.OpenEditorAfterSnip, () =>
+        {
+            _s.ShowThumbnail = false;
+            _s.OpenEditorAfterSnip = false;
+        });
+        panel.Children.Add(_preview);
+        panel.Children.Add(_editor);
+        panel.Children.Add(_nothing);
         panel.Children.Add(Row("Preview stays for", _previewSeconds));
 
         panel.Children.Add(Heading("Selection"));
@@ -190,12 +205,19 @@ sealed class SettingsWindow : Window
 
         _refresh.Add(() =>
         {
-            _copy.IsChecked = _s.CopyToClipboard;
-            _preview.IsChecked = _s.ShowThumbnail;
-            _previewSeconds.IsEnabled = _s.ShowThumbnail;
-            _magnifier.IsChecked = _s.ShowMagnifier;
-            SetComboValue(_previewSeconds, _s.PreviewSeconds);
-            SetComboValue(_delaySeconds, _s.DelaySeconds);
+            _suppress = true;
+            try
+            {
+                _copy.IsChecked = _s.CopyToClipboard;
+                _preview.IsChecked = _s.ShowThumbnail && !_s.OpenEditorAfterSnip;
+                _editor.IsChecked = _s.OpenEditorAfterSnip;
+                _nothing.IsChecked = !_s.ShowThumbnail && !_s.OpenEditorAfterSnip;
+                SetPreviewDelayEnabled(_s.ShowThumbnail && !_s.OpenEditorAfterSnip);
+                _magnifier.IsChecked = _s.ShowMagnifier;
+                SetComboValue(_previewSeconds, _s.PreviewSeconds);
+                SetComboValue(_delaySeconds, _s.DelaySeconds);
+            }
+            finally { _suppress = false; }
         });
         return panel;
     }
@@ -351,6 +373,7 @@ sealed class SettingsWindow : Window
         _s.SaveFormat = "png";
         _s.MonthlyFolders = false;
         _s.ShowThumbnail = true;
+        _s.OpenEditorAfterSnip = false;
         _s.PreviewSeconds = 6;
         _s.ShowMagnifier = true;
         _s.DelaySeconds = 3;
@@ -405,6 +428,7 @@ sealed class SettingsWindow : Window
         var check = new CheckBox { Content = text, IsChecked = value, Margin = new Thickness(0, 2) };
         check.IsCheckedChanged += (_, _) =>
         {
+            if (_suppress) return;
             if (check.IsChecked is bool on)
             {
                 set(on);
@@ -412,6 +436,34 @@ sealed class SettingsWindow : Window
             }
         };
         return check;
+    }
+
+    void SetPreviewDelayEnabled(bool enabled)
+    {
+        if (_previewSeconds == null) return;
+        _previewSeconds.IsEnabled = enabled;
+        // The fluent theme keeps a disabled combo at full strength, so dim it.
+        _previewSeconds.Opacity = enabled ? 1 : 0.4;
+    }
+
+    RadioButton Radio(string text, bool value, Action select)
+    {
+        var radio = new RadioButton
+        {
+            Content = text,
+            GroupName = "AfterSnip",
+            IsChecked = value,
+            Foreground = AppTheme.Text,
+            Margin = new Thickness(0, 1),
+        };
+        radio.IsCheckedChanged += (_, _) =>
+        {
+            if (_suppress || radio.IsChecked != true) return;
+            select();
+            SetPreviewDelayEnabled(ReferenceEquals(radio, _preview));
+            Save();
+        };
+        return radio;
     }
 
     ComboBox IntCombo(int current, int[] values, Func<int, string> label, Action<int> set)
