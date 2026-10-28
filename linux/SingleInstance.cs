@@ -11,7 +11,28 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
         line = (line ?? "").Trim();
         if (line.StartsWith("edit ", StringComparison.Ordinal) || line.StartsWith("edit\t", StringComparison.Ordinal))
             return new RemoteCommand(LaunchAction.Edit, line[5..].Trim());
+        if (line.StartsWith("pin ", StringComparison.Ordinal) || line.StartsWith("pin\t", StringComparison.Ordinal))
+        {
+            string path = line[4..].Trim();
+            return new RemoteCommand(LaunchAction.Pin, path.Length == 0 ? null : path);
+        }
         return new RemoteCommand(ParseAction(line), null);
+    }
+
+    public static string Format(LaunchAction action, string argument)
+    {
+        if (argument != null && (argument.Contains('\n') || argument.Contains('\r')))
+            throw new ArgumentException("Invalid path");
+        if (action == LaunchAction.Edit) return "edit " + (argument ?? "");
+        if (action == LaunchAction.Pin)
+            return string.IsNullOrEmpty(argument) ? "pin" : "pin " + argument;
+        return action switch
+        {
+            LaunchAction.SnipDelay => "snip-delay",
+            LaunchAction.Repeat => "repeat",
+            LaunchAction.Settings => "settings",
+            _ => "snip",
+        };
     }
 
     static LaunchAction ParseAction(string line) => line switch
@@ -19,6 +40,7 @@ readonly record struct RemoteCommand(LaunchAction Action, string Argument)
         "snip-delay" => LaunchAction.SnipDelay,
         "repeat" => LaunchAction.Repeat,
         "settings" => LaunchAction.Settings,
+        "pin" => LaunchAction.Pin,
         _ => LaunchAction.Snip,
     };
 }
@@ -135,18 +157,20 @@ static class SingleInstance
     public static bool Send(LaunchAction action, string argument, out string error)
     {
         error = null;
-        if (argument != null && (argument.Contains('\n') || argument.Contains('\r')))
+        string line;
+        try { line = RemoteCommand.Format(action, argument); }
+        catch (ArgumentException)
         {
             error = "Invalid path";
             return false;
         }
+
         string path = _socketPath ?? BuildSocketPath();
         try
         {
             using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             using var cts = new CancellationTokenSource(1500);
             socket.ConnectAsync(new UnixDomainSocketEndPoint(path), cts.Token).AsTask().GetAwaiter().GetResult();
-            string line = action == LaunchAction.Edit ? "edit " + (argument ?? "") : CommandName(action);
             var payload = Encoding.UTF8.GetBytes(line + "\n");
             socket.Send(payload);
             try { socket.Shutdown(SocketShutdown.Send); } catch { }
@@ -158,15 +182,6 @@ static class SingleInstance
             return false;
         }
     }
-
-    static string CommandName(LaunchAction action) => action switch
-    {
-        LaunchAction.SnipDelay => "snip-delay",
-        LaunchAction.Repeat => "repeat",
-        LaunchAction.Settings => "settings",
-        LaunchAction.Edit => "edit",
-        _ => "snip",
-    };
 
     static async Task AcceptLoopAsync(CancellationToken token)
     {

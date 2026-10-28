@@ -115,9 +115,9 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 ## Linux
 
-The Linux app is a separate native Avalonia build. It covers screenshots and annotation; recording, pins and built-in global shortcuts remain Windows-only.
+The Linux app is a separate native Avalonia build. It covers screenshots, annotation, and pinned images; recording and built-in global shortcuts remain Windows-only.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; tray icon; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; pinned images (under the pointer on X11, centered on Wayland); tray icon; and settings.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -129,11 +129,11 @@ cd OpenSnip-linux-x64
 
 The installer copies the binary to `~/.local/bin/opensnip`, so make sure `~/.local/bin` is on your `PATH`.
 
-**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support. A tray host is optional. Without one, Settings opens on launch and closing it quits OpenSnip, unless an editor is still open. `opensnip --edit file.png` opens only the editor.
+**Requirements:** x64 Linux; X11 or Wayland with `xdg-desktop-portal`; `xclip` (X11) or `wl-clipboard` (Wayland) for clipboard support. A tray host is optional. Without one, Settings opens on launch and closing it quits OpenSnip, unless a pin or editor is still open. `opensnip --pin` opens only the pin, and `opensnip --edit file.png` opens only the editor.
 
 ### Shortcuts
 
-There are no built-in global shortcuts on Linux; bind your own in GNOME Settings → Keyboard → Custom Shortcuts, or KDE System Settings → Shortcuts. Use `opensnip --snip` for a normal snip, `opensnip --snip-delay` for a delayed one, `opensnip --repeat` to re-capture the last region, and `opensnip --settings` to open settings.
+There are no built-in global shortcuts on Linux; bind your own in GNOME Settings → Keyboard → Custom Shortcuts, or KDE System Settings → Shortcuts. Use `opensnip --snip` for a normal snip, `opensnip --snip-delay` for a delayed one, `opensnip --repeat` to re-capture the last region, `opensnip --pin` to pin the clipboard image, `opensnip --pin file.png` to pin a file, `opensnip --edit file.png` to edit an image, and `opensnip --settings` to open settings.
 
 ### Selecting a region
 
@@ -156,6 +156,8 @@ Click the preview to annotate, or drag it to drop the file. The tray command **O
 ### Command line
 
 ```bash
+opensnip --pin                # pin the clipboard image
+opensnip --pin file.png       # pin a file
 opensnip --capture file.png   # capture the whole desktop without UI
 opensnip --edit file.png      # open an image in the editor
 opensnip --diagnostics [file] # print (and optionally write) a diagnostic report
@@ -216,6 +218,7 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
 | `linux/X11Windows.cs` | Top-level X11 windows for click-to-capture |
 | `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
+| `linux/PinWindow.cs` | Linux pinned images |
 | `linux/Annotation.cs` | Annotation shapes for the Linux editor |
 | `linux/EditorWindow.cs` | Linux annotation editor |
 | `linux/SettingsWindow.cs` | Linux Settings window |

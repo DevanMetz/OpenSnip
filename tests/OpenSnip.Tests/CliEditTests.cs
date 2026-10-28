@@ -40,6 +40,25 @@ public class CliEditTests
     }
 
     [Theory]
+    [InlineData("Edit", "/tmp/my shot.png")]
+    [InlineData("Pin", "/tmp/my shot.png")]
+    [InlineData("Pin", null)]
+    public void Image_commands_format_and_parse(string actionName, string path)
+    {
+        var action = Enum.Parse<LaunchAction>(actionName);
+        var command = RemoteCommand.Parse(RemoteCommand.Format(action, path));
+        Assert.Equal(action, command.Action);
+        Assert.Equal(path, command.Argument);
+    }
+
+    [Fact]
+    public void Pin_and_edit_cannot_be_combined()
+    {
+        Assert.Throws<CliException>(() => Cli.Parse(new[] { "--pin", "--edit", "shot.png" }));
+        Assert.Throws<CliException>(() => Cli.Parse(new[] { "--edit", "shot.png", "--pin" }));
+    }
+
+    [Theory]
     [InlineData("edit /tmp/my shot.png", "Edit", "/tmp/my shot.png")]
     [InlineData("snip-delay", "SnipDelay", null)]
     [InlineData("settings", "Settings", null)]

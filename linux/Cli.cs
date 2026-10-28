@@ -7,6 +7,7 @@ enum LaunchAction
     SnipDelay,
     Repeat,
     Settings,
+    Pin,
     Edit,
 }
 
@@ -17,6 +18,7 @@ sealed class CliOptions
     public bool Diagnostics { get; init; }
     public string DiagnosticsFile { get; init; }
     public string CaptureFile { get; init; }
+    public string PinFile { get; init; }
     public string EditFile { get; init; }
 }
 
@@ -28,7 +30,7 @@ static class Cli
         "OpenSnip " + Version + "\n" +
         "\n" +
         "Usage:\n" +
-        "  OpenSnip [--snip] [--snip-delay] [--repeat] [--settings]\n" +
+        "  OpenSnip [--snip] [--snip-delay] [--repeat] [--settings] [--pin [file]]\n" +
         "  OpenSnip --edit <file>\n" +
         "  OpenSnip --capture <file.png>\n" +
         "  OpenSnip --diagnostics [file]\n" +
@@ -39,6 +41,7 @@ static class Cli
         "  --snip-delay        Capture after the configured delay.\n" +
         "  --repeat            Capture the last region again.\n" +
         "  --settings          Open settings; starts OpenSnip if needed.\n" +
+        "  --pin [file]        Pin the clipboard image, or a file, on screen.\n" +
         "  --edit <file>       Open an image in the editor.\n" +
         "  --capture <file>    Capture the full desktop without UI.\n" +
         "  --diagnostics [file]  Print a diagnostic report, optionally write it.\n" +
@@ -50,7 +53,7 @@ static class Cli
 
         LaunchAction action = LaunchAction.None;
         bool help = false, diagnostics = false;
-        string diagnosticsFile = null, captureFile = null, editFile = null;
+        string diagnosticsFile = null, captureFile = null, pinFile = null, editFile = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -72,6 +75,11 @@ static class Cli
                     break;
                 case "--settings":
                     action = MergeAction(action, LaunchAction.Settings);
+                    break;
+                case "--pin":
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-", StringComparison.Ordinal))
+                        pinFile = args[++i];
+                    action = MergeAction(action, LaunchAction.Pin);
                     break;
                 case "--diagnostics":
                     diagnostics = true;
@@ -108,13 +116,17 @@ static class Cli
             Diagnostics = diagnostics,
             DiagnosticsFile = diagnosticsFile,
             CaptureFile = captureFile,
+            PinFile = pinFile,
             EditFile = editFile,
         };
     }
 
-    public static string ResolveEditPath(string path)
+    public static string ResolvePinPath(string path) => ResolveImagePath(path, "--pin");
+    public static string ResolveEditPath(string path) => ResolveImagePath(path, "--edit");
+
+    static string ResolveImagePath(string path, string option)
     {
-        if (string.IsNullOrWhiteSpace(path)) throw new CliException("--edit needs an image file.");
+        if (string.IsNullOrWhiteSpace(path)) throw new CliException(option + " needs an image file.");
         string full;
         try { full = Path.GetFullPath(path); }
         catch (Exception ex) { throw new CliException("Could not open that image: " + ex.Message); }

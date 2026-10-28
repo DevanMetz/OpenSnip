@@ -50,7 +50,7 @@ jobs:
       - name: Test
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-6
+          sudo apt-get install -y xvfb libx11-6
           dotnet test tests/OpenSnip.Tests/OpenSnip.Tests.csproj -c Release --nologo
 
       - name: Publish

@@ -288,6 +288,7 @@ sealed class SettingsWindow : Window
         panel.Children.Add(CommandRow("Snip", PlatformInfo.Command("--snip")));
         panel.Children.Add(CommandRow("Delayed snip", PlatformInfo.Command("--snip-delay")));
         panel.Children.Add(CommandRow("Repeat last region", PlatformInfo.Command("--repeat")));
+        panel.Children.Add(CommandRow("Pin clipboard image", PlatformInfo.Command("--pin")));
         return panel;
     }
 
