@@ -16,6 +16,7 @@ sealed class App : Application
 
     IClassicDesktopStyleApplicationLifetime _desktop;
     TrayIcon _tray;
+    Notifications _notifications;
     NativeMenuItem _delayItem;
     NativeMenuItem _recordItem;
     SettingsWindow _settingsWindow;
@@ -122,6 +123,15 @@ sealed class App : Application
                 OpenEditFile(argument);
                 if (!_trayAvailable && _editors.Count == 0) ShowSettings();
                 break;
+        }
+
+        if (Notifications.TakeFirstRun(Settings))
+        {
+            Settings.Save();
+            _notifications = new Notifications();
+            await _notifications.ShowAsync(
+                Notifications.BuildMessage(Settings, PlatformInfo.IsWayland, PlatformInfo.Command("--snip")),
+                () => Dispatcher.UIThread.Post(() => { if (!_exiting) StartSnip(); }));
         }
 
         _started = true;
@@ -762,6 +772,7 @@ sealed class App : Application
         _hotkeys = null;
         try { _tray?.Dispose(); } catch { }
         _tray = null;
+        _notifications?.Dispose();
         SingleInstance.Stop();
         _desktop?.Shutdown();
     }

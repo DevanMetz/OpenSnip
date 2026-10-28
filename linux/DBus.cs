@@ -18,7 +18,7 @@ static class DBus
 
     public static bool SessionAvailable => !string.IsNullOrWhiteSpace(SessionAddress);
 
-    static async Task<Connection> ConnectAsync()
+    internal static async Task<Connection> ConnectAsync()
     {
         if (!SessionAvailable) throw new InvalidOperationException("No session bus");
         var connection = new Connection(SessionAddress);
