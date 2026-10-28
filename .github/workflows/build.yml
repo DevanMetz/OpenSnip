@@ -52,6 +52,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb libx11-6
           dotnet test tests/OpenSnip.Tests/OpenSnip.Tests.csproj -c Release --nologo
+          dotnet test tests/OpenSnip.Hotkeys.Tests/OpenSnip.Hotkeys.Tests.csproj -c Release --nologo
 
       - name: Publish
         run: dotnet publish linux/OpenSnip.Linux.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist/linux

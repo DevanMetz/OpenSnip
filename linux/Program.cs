@@ -8,6 +8,7 @@ static class Program
     public static int Main(string[] args)
     {
         ConfigPaths.EnsureConfigHome();
+        X11Native.InitThreads();
 
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             Log.Error(e.ExceptionObject as Exception ?? new Exception("Unhandled exception"));
