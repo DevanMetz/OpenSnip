@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
 namespace OpenSnip;
@@ -8,6 +9,7 @@ namespace OpenSnip;
 sealed class App : Application
 {
     public static LaunchAction StartupAction { get; set; }
+    public static string StartupArgument { get; set; }
     public static App Instance { get; private set; }
 
     public Settings Settings { get; }
@@ -17,6 +19,7 @@ sealed class App : Application
     NativeMenuItem _delayItem;
     SettingsWindow _settingsWindow;
     ThumbnailWindow _thumbnail;
+    readonly List<EditorWindow> _editors = new();
     PixelRect? _lastRegion;
     bool _trayAvailable;
     bool _busy;
@@ -39,7 +42,7 @@ sealed class App : Application
         {
             _desktop = desktop;
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            SingleInstance.SetHandler(action => Dispatcher.UIThread.Post(() => HandleAction(action)));
+            SingleInstance.SetHandler(command => Dispatcher.UIThread.Post(() => HandleCommand(command)));
             _ = StartAsync();
         }
         base.OnFrameworkInitializationCompleted();
@@ -76,10 +79,11 @@ sealed class App : Application
             }
         }
 
-        if (!_trayAvailable) ShowSettings();
-
         var action = StartupAction;
         StartupAction = LaunchAction.None;
+        // An edit session already has a window. Settings is the home window only
+        // when nothing else is on screen, because closing it quits a tray-less app.
+        if (!_trayAvailable && action != LaunchAction.Edit) ShowSettings();
         switch (action)
         {
             case LaunchAction.Snip:
@@ -94,6 +98,10 @@ sealed class App : Application
             case LaunchAction.Settings:
                 ShowSettings();
                 break;
+            case LaunchAction.Edit:
+                OpenEditFile(StartupArgument);
+                if (!_trayAvailable && _editors.Count == 0) ShowSettings();
+                break;
         }
     }
 
@@ -105,6 +113,7 @@ sealed class App : Application
         menu.Add(_delayItem);
         menu.Add(Item("Repeat last region", RepeatLast));
         menu.Add(new NativeMenuItemSeparator());
+        menu.Add(Item("Open image in editor…", () => _ = OpenImageAsync()));
         menu.Add(Item("Open screenshots folder", OpenScreenshotsFolder));
         menu.Add(Item("Settings…", () => ShowSettings()));
         menu.Add(new NativeMenuItemSeparator());
@@ -128,14 +137,15 @@ sealed class App : Application
         return item;
     }
 
-    void HandleAction(LaunchAction action)
+    void HandleCommand(RemoteCommand command)
     {
-        switch (action)
+        switch (command.Action)
         {
             case LaunchAction.Snip: StartSnip(); break;
             case LaunchAction.SnipDelay: StartSnip(Settings.DelaySeconds); break;
             case LaunchAction.Repeat: RepeatLast(); break;
             case LaunchAction.Settings: ShowSettings(); break;
+            case LaunchAction.Edit: OpenEditFile(command.Argument); break;
         }
     }
 
@@ -147,7 +157,13 @@ sealed class App : Application
     public void SettingsWindowClosed(SettingsWindow window)
     {
         if (ReferenceEquals(_settingsWindow, window)) _settingsWindow = null;
-        if (!_trayAvailable) Dispatcher.UIThread.Post(ExitApp);
+        ExitIfIdle();
+    }
+
+    void ExitIfIdle()
+    {
+        if (_trayAvailable || _settingsWindow != null || _editors.Count > 0) return;
+        Dispatcher.UIThread.Post(ExitApp);
     }
 
     public void ShowSettings(string page = "Capture")
@@ -297,8 +313,114 @@ sealed class App : Application
             }
         }
 
-        if (Settings.ShowThumbnail || (!copied && saved == null))
+        if (Settings.OpenEditorAfterSnip)
+        {
+            try { OpenEditor(frame); }
+            catch (Exception ex)
+            {
+                Log.Error(ex);
+                ShowThumbnail(frame, saved);
+            }
+        }
+        else if (Settings.ShowThumbnail || (!copied && saved == null))
             ShowThumbnail(frame, saved);
+    }
+
+    public void OpenEditor(CapturedFrame frame)
+    {
+        if (frame == null) return;
+        var editor = new EditorWindow(frame, Settings);
+        _editors.Add(editor);
+        editor.Closed += (_, _) =>
+        {
+            _editors.Remove(editor);
+            ExitIfIdle();
+        };
+        editor.Show();
+        editor.Activate();
+    }
+
+    public void OpenEditFile(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                _ = ShowErrorAsync("Could not open that image.");
+                return;
+            }
+            OpenEditor(CapturedFrame.DecodeFile(path));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            _ = ShowErrorAsync("Could not open that image: " + ex.Message);
+        }
+    }
+
+    public async Task OpenImageAsync()
+    {
+        Window host = null;
+        bool temporary = false;
+        try
+        {
+            if (_settingsWindow != null && _settingsWindow.IsVisible)
+                host = _settingsWindow;
+            else
+            {
+                host = new Window
+                {
+                    Width = 1,
+                    Height = 1,
+                    ShowInTaskbar = false,
+                    ShowActivated = false,
+                    SystemDecorations = SystemDecorations.None,
+                    Opacity = 0,
+                    WindowStartupLocation = WindowStartupLocation.Manual,
+                    Position = new PixelPoint(-10000, -10000),
+                };
+                host.Show();
+                temporary = true;
+            }
+
+            IStorageFolder start = null;
+            if (!string.IsNullOrWhiteSpace(Settings.SaveFolder) && Directory.Exists(Settings.SaveFolder))
+                start = await host.StorageProvider.TryGetFolderFromPathAsync(Settings.SaveFolder);
+            var files = await host.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Open image",
+                AllowMultiple = false,
+                SuggestedStartLocation = start,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Images")
+                    {
+                        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.webp" },
+                    },
+                    FilePickerFileTypes.All,
+                },
+            });
+            if (files == null || files.Count == 0) return;
+            string path = files[0].TryGetLocalPath();
+            if (string.IsNullOrEmpty(path))
+            {
+                await ShowErrorAsync("Could not open that image.");
+                return;
+            }
+            OpenEditor(CapturedFrame.DecodeFile(path));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+            await ShowErrorAsync("Could not open that image: " + ex.Message);
+        }
+        finally
+        {
+            if (temporary)
+            {
+                try { host?.Close(); } catch { }
+            }
+        }
     }
 
     void ShowThumbnail(CapturedFrame frame, string path)
