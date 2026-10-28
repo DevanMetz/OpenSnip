@@ -15,6 +15,7 @@ sealed class ThumbnailWindow : Window
 {
     readonly PixelRect? _anchor;
     readonly CapturedFrame _frame;
+    readonly bool _play;
     readonly DispatcherTimer _timer;
     string _path;
     Point _press;
@@ -24,6 +25,7 @@ sealed class ThumbnailWindow : Window
     public ThumbnailWindow(CapturedFrame frame, string savedPath, int seconds, bool play = false, PixelRect? anchor = null)
     {
         _frame = frame;
+        _play = play;
         _path = savedPath;
         _anchor = anchor;
         Title = "OpenSnip";
@@ -70,7 +72,7 @@ sealed class ThumbnailWindow : Window
             Child = picture,
         };
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(1, seconds)) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Math.Max(play ? 8 : 1, seconds)) };
         _timer.Tick += (_, _) => Close();
         Opened += (_, _) =>
         {
@@ -175,37 +177,38 @@ sealed class ThumbnailWindow : Window
         e.Pointer.Capture(null);
         if (!_pressed) return;
         _pressed = false;
-        try { App.Instance?.OpenEditor(_frame); }
+        try
+        {
+            if (_play) PlatformInfo.Open(_path);
+            else App.Instance?.OpenEditor(_frame);
+        }
         catch (Exception ex) { Log.Error(ex); }
         Close();
         e.Handled = true;
     }
 
-    void StartDrag(PointerEventArgs e)
+    async void StartDrag(PointerEventArgs e)
     {
         try
         {
             string path = EnsureDragFile();
-            var file = StorageProvider.TryGetFileFromPathAsync(path).GetAwaiter().GetResult();
-            if (file == null)
-            {
-                AbandonDrag();
-                return;
-            }
-            var data = new DataTransfer();
-            data.Add(DataTransferItem.CreateFile(file));
-            _ = FinishDragAsync(e, data);
+            using var file = await StorageProvider.TryGetFileFromPathAsync(path);
+            using var data = FileUri.CreateDragData(path, file);
+            await FinishDragAsync(e, data);
         }
         catch (Exception ex)
         {
             Log.Error(ex);
             AbandonDrag();
         }
+        finally
+        {
+            e.Pointer.Capture(null);
+        }
     }
 
     void AbandonDrag()
     {
-        _dragged = false;
         _timer.Start();
     }
 
@@ -227,6 +230,8 @@ sealed class ThumbnailWindow : Window
     string EnsureDragFile()
     {
         if (!string.IsNullOrEmpty(_path) && File.Exists(_path)) return _path;
+        // A missing recording must never turn into a PNG drag of its poster frame.
+        if (_play) throw new FileNotFoundException("Recording is no longer available.", _path);
         string path = CapturedFrame.UniquePath(Path.Combine(Path.GetTempPath(), "OpenSnip"), "png");
         _frame.Save(path, "png");
         _path = path;
