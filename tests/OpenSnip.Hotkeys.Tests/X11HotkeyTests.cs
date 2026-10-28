@@ -15,9 +15,10 @@ public class X11HotkeyTests
             UsePrintScreen = false,
         };
         int hits = 0;
+        var commands = new System.Collections.Concurrent.ConcurrentQueue<HotkeyCommand>();
         var listen = new List<HotkeyChord>();
         var listenDone = new TaskCompletionSource<HotkeyChord>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var service = X11HotkeyService.TryStart(bindings, _ => Interlocked.Increment(ref hits));
+        using var service = X11HotkeyService.TryStart(bindings, command => { commands.Enqueue(command); Interlocked.Increment(ref hits); });
         Assert.NotNull(service);
 
         int codeZ = service.KeycodeFor("Z");
@@ -61,19 +62,40 @@ public class X11HotkeyTests
         // The keys from capture must not stay "down" after the grab ends, or the new shortcut never fires.
         service.Update(new HotkeyBindings
         {
-            Snip = HotkeyChord.Parse("Ctrl+Shift+B"),
+            Record = HotkeyChord.Parse("Ctrl+Shift+B"),
             UsePrintScreen = false,
         });
         Thread.Sleep(200);
         Press("ctrl+shift+b");
         Wait(() => Volatile.Read(ref hits) >= 3);
         Assert.Equal(3, Volatile.Read(ref hits));
+        Assert.Equal(HotkeyCommand.Record, commands.Last());
+        Press("ctrl+shift+b");
+        Wait(() => Volatile.Read(ref hits) >= 4);
+        Assert.Equal(HotkeyCommand.Record, commands.Last());
         Press("ctrl+alt+shift+z");
         Thread.Sleep(250);
-        Assert.Equal(3, Volatile.Read(ref hits));
+        Assert.Equal(4, Volatile.Read(ref hits));
 
         service.Dispose();
         Assert.True(X11HotkeyService.ProbeGrabSucceeds(codeZ, mask));
+
+        // A desktop-owned recording chord reports a conflict without taking down the service.
+        var other = X11Native.XOpenDisplay(null);
+        Assert.NotEqual(IntPtr.Zero, other);
+        try
+        {
+            X11Native.XGrabKey(other, codeZ, mask, X11Native.XDefaultRootWindow(other), 0, 1, 1);
+            X11Native.XSync(other, 0);
+            var conflict = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var blocked = X11HotkeyService.TryStart(new HotkeyBindings { Record = bindings.Snip },
+                _ => { }, message => conflict.TrySetResult(message));
+            Assert.NotNull(blocked);
+            var reported = await Task.WhenAny(conflict.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+            Assert.Same(conflict.Task, reported);
+            Assert.Contains("Start / stop recording", await conflict.Task);
+        }
+        finally { X11Native.XCloseDisplay(other); }
     }
 
     static void Press(string combo)

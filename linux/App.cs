@@ -72,7 +72,11 @@ sealed class App : Application
 
     async Task StartAsyncCore()
     {
-        try { _hotkeys = X11HotkeyService.TryStart(HotkeyBindings.From(Settings), OnHotkey); }
+        try
+        {
+            _hotkeys = X11HotkeyService.TryStart(HotkeyBindings.From(Settings), OnHotkey, message =>
+                Dispatcher.UIThread.Post(() => _ = ShowErrorAsync(message)));
+        }
         catch (Exception ex) { Log.Error(ex); }
 
         try { _trayAvailable = await DBus.TrayHostAvailableAsync(); }
@@ -208,6 +212,11 @@ sealed class App : Application
     {
         Dispatcher.UIThread.Post(() =>
         {
+            if (command == HotkeyCommand.Record)
+            {
+                ToggleRecording();
+                return;
+            }
             if (_busy) return;
             switch (command)
             {

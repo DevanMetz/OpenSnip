@@ -121,6 +121,8 @@ sealed class X11HotkeyService : IDisposable
     static IntPtr _previousHandler;
 
     readonly Action<HotkeyCommand> _onCommand;
+    readonly Action<string> _onConflict;
+    string _lastConflict = "";
     readonly object _gate = new();
     readonly Queue<Action> _commands = new();
     readonly HashSet<int> _down = new();
@@ -143,8 +145,9 @@ sealed class X11HotkeyService : IDisposable
     HotkeyBindings _bindings;
     Action<HotkeyChord?> _listenCallback;
 
-    X11HotkeyService(HotkeyBindings bindings, Action<HotkeyCommand> onCommand)
+    X11HotkeyService(HotkeyBindings bindings, Action<HotkeyCommand> onCommand, Action<string> onConflict)
     {
+        _onConflict = onConflict;
         _bindings = bindings ?? new HotkeyBindings();
         _onCommand = onCommand ?? (_ => { });
     }
@@ -164,10 +167,10 @@ sealed class X11HotkeyService : IDisposable
         }
     }
 
-    public static X11HotkeyService TryStart(HotkeyBindings bindings, Action<HotkeyCommand> onCommand)
+    public static X11HotkeyService TryStart(HotkeyBindings bindings, Action<HotkeyCommand> onCommand, Action<string> onConflict = null)
     {
         if (!IsSupported) return null;
-        var service = new X11HotkeyService(bindings, onCommand);
+        var service = new X11HotkeyService(bindings, onCommand, onConflict);
         if (service.Start()) return service;
         service.Dispose();
         return null;
@@ -376,6 +379,7 @@ sealed class X11HotkeyService : IDisposable
         X11Native.XUngrabKey(_display, 0, HotkeyGrabs.AnyModifier, _root);
         X11Native.XSync(_display, 0);
         var grabs = HotkeyGrabs.Plan(_bindings, LookupKeycode, _altMask, _superMask);
+        var conflicts = new HashSet<HotkeyCommand>();
         foreach (var grab in grabs)
         {
             int before = _errorCount;
@@ -383,9 +387,20 @@ sealed class X11HotkeyService : IDisposable
             X11Native.XSync(_display, 0);
             if (_errorCount != before)
             {
-                // Another client already owns this combination. The others still work.
+                conflicts.Add(grab.Command);
             }
         }
+        string conflict = string.Join(", ", conflicts.OrderBy(command => command).Select(command => command switch
+        {
+            HotkeyCommand.Snip => "Snip",
+            HotkeyCommand.SnipDelay => "Snip after delay",
+            HotkeyCommand.Repeat => "Repeat last region",
+            HotkeyCommand.Record => "Start / stop recording",
+            _ => command.ToString(),
+        }));
+        if (conflict != _lastConflict && conflict.Length > 0)
+            _onConflict?.Invoke($"Shortcut unavailable: {conflict}. Change it in Settings → Shortcuts or release it in your desktop settings.");
+        _lastConflict = conflict;
     }
 
     int LookupKeycode(string key)

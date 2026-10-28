@@ -418,6 +418,7 @@ sealed class SettingsWindow : Window
             ShortcutRowFor(panel, "Snip", () => _s.SnipHotkey, v => _s.SnipHotkey = v);
             ShortcutRowFor(panel, "Snip after delay", () => _s.DelayHotkey, v => _s.DelayHotkey = v);
             ShortcutRowFor(panel, "Repeat last region", () => _s.RepeatHotkey, v => _s.RepeatHotkey = v);
+            ShortcutRowFor(panel, "Start / stop recording", () => _s.RecordHotkey, v => _s.RecordHotkey = v);
             _printScreen = Check("Also use the Print Screen key", _s.UsePrintScreen, v => _s.UsePrintScreen = v);
             panel.Children.Add(_printScreen);
             _shortcutStatus = new TextBlock
@@ -545,6 +546,7 @@ sealed class SettingsWindow : Window
         _s.SnipHotkey = "Win+Shift+S";
         _s.DelayHotkey = "";
         _s.RepeatHotkey = "";
+        _s.RecordHotkey = "Win+Shift+R";
         _s.UsePrintScreen = true;
         Save();
         foreach (var refresh in _refresh) refresh();
