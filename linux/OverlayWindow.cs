@@ -1,11 +1,14 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace OpenSnip;
 
@@ -289,10 +292,18 @@ sealed class CaptureCanvas : Control
     readonly int _index;
     readonly Typeface _typeface = new("Inter");
 
+    byte[] _loupePixels;
+    byte[] _loupeScaled;
+    WriteableBitmap _loupe;
+    int _loupeCell;
+
     static readonly IBrush DimBrush = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
     static readonly IBrush ReadoutBrush = new SolidColorBrush(Color.FromArgb(238, 38, 38, 44));
+    static readonly IBrush GridTint = new SolidColorBrush(Color.FromArgb(60, AppTheme.AccentColor.R, AppTheme.AccentColor.G, AppTheme.AccentColor.B));
     static readonly IPen AccentPen = new Pen(AppTheme.Accent, 2);
     static readonly IPen CrosshairPen = new Pen(AppTheme.Accent, 1);
+    static readonly IPen CenterWhite = new Pen(Brushes.White, 1);
+    static readonly IPen CenterBlack = new Pen(Brushes.Black, 1);
 
     public CaptureCanvas(OverlaySession session, int index)
     {
@@ -431,77 +442,78 @@ sealed class CaptureCanvas : Control
 
     void DrawMagnifier(DrawingContext context, Point cursor, Rect? readout, Rect view)
     {
-        if (!_session.Map.TryToImage(new PixelRect(_session.Snip.Cursor.X, _session.Snip.Cursor.Y, 1, 1), out var pixel))
-            return;
+        const double pad = 7;
+        const double swatch = 10;
+        const double infoH = 24;
 
-        const double inner = 104;
-        const double pad = 3;
-        const double labelHeight = 20;
-        double total = inner + pad * 2;
-        var box = PlaceMagnifier(cursor, total, total + labelHeight, readout, view);
-        int imageX = Math.Clamp(pixel.X, 0, Math.Max(0, _session.Bitmap.PixelSize.Width - 1));
-        int imageY = Math.Clamp(pixel.Y, 0, Math.Max(0, _session.Bitmap.PixelSize.Height - 1));
-        int frameW = _session.Bitmap.PixelSize.Width;
-        int frameH = _session.Bitmap.PixelSize.Height;
-        const int sourceSize = 24;
-        int left = imageX - sourceSize / 2;
-        int top = imageY - sourceSize / 2;
-        int srcL = Math.Max(0, left), srcT = Math.Max(0, top);
-        int srcR = Math.Min(frameW, left + sourceSize), srcB = Math.Min(frameH, top + sourceSize);
-        var source = new Rect(srcL, srcT, srcR - srcL, srcB - srcT);
-        var dest = new Rect(box.X + pad, box.Y + pad, inner, inner);
+        if (!_session.Map.TryToImage(new PixelRect(_session.Snip.Cursor.X, _session.Snip.Cursor.Y, 1, 1), out var pixel)) return;
+        int imageX = pixel.X;
+        int imageY = pixel.Y;
+        Magnifier.TryPixel(_session.Frame, imageX, imageY, out byte red, out byte green, out byte blue);
+        var label = new FormattedText(Magnifier.Label(_session.Snip.Cursor.X, _session.Snip.Cursor.Y, red, green, blue), CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, _typeface, 12, AppTheme.Text);
 
-        context.DrawRectangle(ReadoutBrush, new Pen(AppTheme.Accent, 2), new Rect(box.X, box.Y, total, total + labelHeight), 7, 7);
-        using (context.PushClip(dest))
-            context.DrawImage(_session.Bitmap, source, new Rect(dest.X + (srcL - left) * inner / sourceSize, dest.Y + (srcT - top) * inner / sourceSize, source.Width * inner / sourceSize, source.Height * inner / sourceSize));
-        var center = new Point(dest.X + (imageX - left + 0.5) * inner / sourceSize, dest.Y + (imageY - top + 0.5) * inner / sourceSize);
-        context.DrawLine(CrosshairPen, new Point(center.X - 7, center.Y), new Point(center.X + 7, center.Y));
-        context.DrawLine(CrosshairPen, new Point(center.X, center.Y - 7), new Point(center.X, center.Y + 7));
+        int cell = Math.Max(8, (int)Math.Ceiling((label.Width + swatch + pad * 3) / Magnifier.Cells));
+        double grid = Magnifier.Cells * cell;
+        double boxW = Math.Max(grid, label.Width + swatch + pad * 3);
+        double boxH = grid + infoH;
+        Magnifier.Box? avoid = readout is { } block
+            ? new Magnifier.Box(block.X, block.Y, block.Width, block.Height)
+            : null;
+        var placed = Magnifier.Place(cursor.X, cursor.Y, boxW, boxH, view.Width, view.Height, avoid);
+        var box = new Rect(placed.X, placed.Y, placed.Width, placed.Height);
 
-        var label = new FormattedText($"{_session.Snip.Cursor.X}, {_session.Snip.Cursor.Y}  {_session.Frame.ColorLabel(imageX, imageY)}", CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, _typeface, 11, AppTheme.Muted);
-        context.DrawText(label, new Point(box.X + (total - label.Width) / 2, box.Y + total + 2));
+        context.FillRectangle(Brushes.Black, box);
+
+        PaintLoupe(context, imageX, imageY, box.X + Math.Round((boxW - grid) / 2), box.Y, grid, cell);
+
+        double infoY = box.Y + grid;
+        context.FillRectangle(new SolidColorBrush(Color.FromRgb(red, green, blue)),
+            new Rect(box.X + pad, infoY + (infoH - swatch) / 2, swatch, swatch));
+        context.DrawText(label, new Point(box.X + pad + swatch + pad, infoY + (infoH - label.Height) / 2));
+        context.DrawRectangle(null, AccentPen, box);
     }
 
-    static Rect PlaceMagnifier(Point cursor, double width, double height, Rect? readout, Rect view)
+    void PaintLoupe(DrawingContext context, int imageX, int imageY, double gridX, double gridY, double grid, int cell)
     {
-        const double gap = 22;
-        const double margin = 4;
-
-        Rect? TryAt(double x, double y)
+        _loupePixels ??= new byte[Magnifier.Cells * Magnifier.Cells * 4];
+        Magnifier.Fill(_session.Frame, imageX, imageY, _loupePixels);
+        int size = Magnifier.Cells * cell;
+        if (_loupe == null || _loupeCell != cell)
         {
-            if (x < margin || y < margin || x + width > view.Width - margin || y + height > view.Height - margin)
-                return null;
-            var rect = new Rect(x, y, width, height);
-            if (readout is { } box && Overlaps(rect, box)) return null;
-            return rect;
+            _loupe?.Dispose();
+            _loupe = new WriteableBitmap(new PixelSize(size, size), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+            _loupeScaled = new byte[size * size * 4];
+            _loupeCell = cell;
+        }
+        Magnifier.Expand(_loupePixels, cell, _loupeScaled);
+        using (var buffer = _loupe.Lock())
+        {
+            int stride = size * 4;
+            for (int row = 0; row < size; row++)
+                Marshal.Copy(_loupeScaled, row * stride, IntPtr.Add(buffer.Address, row * buffer.RowBytes), stride);
         }
 
-        double right = cursor.X + gap;
-        double left = cursor.X - width - gap;
-        double down = cursor.Y + gap;
-        double up = cursor.Y - height - gap;
-        var found = TryAt(right, down) ?? TryAt(left, down) ?? TryAt(right, up) ?? TryAt(left, up);
-        if (found == null && readout is { } blocked)
-        {
-            found = TryAt(blocked.Right + gap, down)
-                    ?? TryAt(blocked.Left - width - gap, down)
-                    ?? TryAt(right, blocked.Bottom + gap)
-                    ?? TryAt(right, blocked.Top - height - gap)
-                    ?? TryAt(left, blocked.Bottom + gap)
-                    ?? TryAt(left, blocked.Top - height - gap);
-        }
-        if (found is { } placed) return placed;
+        // Already nearest-neighbor. Draw 1:1 so the compositor does not blend the cells.
+        var dest = new Rect(gridX, gridY, grid, grid);
+        context.DrawImage(_loupe, dest);
 
-        double fx = right;
-        double fy = down;
-        if (fx + width > view.Width - margin) fx = left;
-        if (fy + height > view.Height - margin) fy = up;
-        fx = Math.Clamp(fx, margin, Math.Max(margin, view.Width - width - margin));
-        fy = Math.Clamp(fy, margin, Math.Max(margin, view.Height - height - margin));
-        return new Rect(fx, fy, width, height);
+        double c0 = Magnifier.Center * cell;
+        double cellSize = cell;
+        context.FillRectangle(GridTint, new Rect(dest.X, dest.Y + c0, c0, cellSize));
+        context.FillRectangle(GridTint, new Rect(dest.X + c0 + cellSize, dest.Y + c0, grid - c0 - cellSize, cellSize));
+        context.FillRectangle(GridTint, new Rect(dest.X + c0, dest.Y, cellSize, c0));
+        context.FillRectangle(GridTint, new Rect(dest.X + c0, dest.Y + c0 + cellSize, cellSize, grid - c0 - cellSize));
+
+        var center = new Rect(dest.X + c0, dest.Y + c0, cellSize, cellSize);
+        context.DrawRectangle(null, CenterBlack, new Rect(center.X - 1, center.Y - 1, center.Width + 2, center.Height + 2));
+        context.DrawRectangle(null, CenterWhite, center);
     }
 
-    static bool Overlaps(Rect a, Rect b) =>
-        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        _loupe?.Dispose();
+        _loupe = null;
+    }
 }

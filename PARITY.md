@@ -17,8 +17,8 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Esc and right-click cancel the snip | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
 | Mixed-DPI placement | working on X11, with one window per monitor. Wayland cross-monitor drags are exact when scales match. | `linux/OverlayWindow.cs`, `linux/MonitorMap.cs`, `linux/X11Pointer.cs` |
 | X11 outputs left of or above the origin | working. Capture falls back to the root at (0, 0) if the server rejects the bounding box. | `linux/X11Randr.cs`, `linux/Capture.cs` |
-| Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
-| Magnifier color | working | `linux/OverlayWindow.cs` |
+| Pixel-grid magnifier, coordinate, and color | working. 15×15 nearest-neighbor cells stay centered on the cursor pixel at frame edges; the strip shows a swatch and `#RRGGBB`. | `linux/Magnifier.cs`, `linux/OverlayWindow.cs` |
+| Magnifier can be turned off | working | `linux/SettingsWindow.cs` |
 | X11 capture | working | `linux/Capture.cs` |
 | Wayland capture (portal screenshot) | working | `linux/Capture.cs`, `linux/DBus.cs` |
 | Copy PNG to the clipboard | working. `xclip` on X11, `wl-copy` on Wayland, then Avalonia. | `linux/ClipboardService.cs` |
