@@ -29,6 +29,7 @@ static class Diagnostics
         report.AppendLine("xdg-desktop-portal: " + (portal ? "available" : "unavailable"));
         report.AppendLine("Tray host: " + (tray ? "available" : "unavailable"));
         report.AppendLine("ffmpeg: " + (FfmpegPlan.Available ? "available" : "missing"));
+        report.AppendLine("H.264 encoder: " + (FfmpegPlan.Available ? HardwareEncoder.Default.Selected.Name : "unavailable"));
         var audio = AudioDevices.Discover();
         report.AppendLine("System audio: " + (audio.SystemSource ?? "none"));
         report.AppendLine("Microphones: " + (audio.Microphones.Count == 0

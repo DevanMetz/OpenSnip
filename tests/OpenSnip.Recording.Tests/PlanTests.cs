@@ -93,7 +93,7 @@ public class PlanTests
     [Fact]
     public void Encode_VideoOnly_UsesCrfAndNoAudio()
     {
-        var args = FfmpegPlan.EncodeArguments(new EncodeSpec
+        var args = SoftwareArguments(new EncodeSpec
         {
             Width = 640,
             Height = 480,
@@ -112,8 +112,8 @@ public class PlanTests
     [Fact]
     public void Encode_MutesTheMicWithoutDroppingTheStream()
     {
-        var on = FfmpegPlan.EncodeArguments(Spec(micOn: true, high: false, fps: 99));
-        var off = FfmpegPlan.EncodeArguments(Spec(micOn: false, high: false, fps: 0));
+        var on = SoftwareArguments(Spec(micOn: true, high: false, fps: 99));
+        var off = SoftwareArguments(Spec(micOn: false, high: false, fps: 0));
         string onFilter = on[on.IndexOf("-filter_complex") + 1];
         string offFilter = off[off.IndexOf("-filter_complex") + 1];
         Assert.Contains("volume=1", onFilter);
@@ -128,7 +128,7 @@ public class PlanTests
     [Fact]
     public void Encode_SystemOnly_MapsThatInput()
     {
-        var args = FfmpegPlan.EncodeArguments(new EncodeSpec
+        var args = SoftwareArguments(new EncodeSpec
         {
             Width = 16,
             Height = 16,
@@ -172,6 +172,8 @@ public class PlanTests
         Assert.Equal("file:///tmp/a%20b.mp4", FileUri.FromPath("/tmp/a b.mp4"));
         Assert.Contains("file:///", FileUri.FromPath("/tmp/opensnip.mp4"));
     }
+
+    static List<string> SoftwareArguments(EncodeSpec spec) => FfmpegPlan.EncodeArguments(spec, EncoderChoice.Software);
 
     static EncodeSpec Spec(bool micOn, bool high, int fps) => new()
     {

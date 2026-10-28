@@ -31,7 +31,10 @@ static class FfmpegPlan
     /// <summary>Windows quality 85 / 65, expressed as x264 CRF. Lower is sharper.</summary>
     public static int Crf(bool highQuality) => highQuality ? 18 : 28;
 
-    public static List<string> EncodeArguments(EncodeSpec spec)
+    public static List<string> EncodeArguments(EncodeSpec spec) =>
+        EncodeArguments(spec, HardwareEncoder.Default.ForRecording(spec));
+
+    internal static List<string> EncodeArguments(EncodeSpec spec, EncoderChoice encoder)
     {
         int framerate = NormalizeFramerate(spec.Framerate);
         var args = new List<string>
@@ -45,6 +48,10 @@ static class FfmpegPlan
             "-use_wallclock_as_timestamps", "1",
             "-i", "pipe:0",
         };
+
+        var deviceArgs = new List<string>();
+        HardwareEncoder.AddDeviceArguments(deviceArgs, encoder);
+        args.InsertRange(4, deviceArgs);
 
         bool system = !string.IsNullOrEmpty(spec.SystemSource);
         bool mic = !string.IsNullOrEmpty(spec.MicSource);
@@ -74,14 +81,7 @@ static class FfmpegPlan
             args.Add("[aout]");
         }
 
-        args.Add("-c:v");
-        args.Add("libx264");
-        args.Add("-preset");
-        args.Add("veryfast");
-        args.Add("-crf");
-        args.Add(Crf(spec.HighQuality).ToString(CultureInfo.InvariantCulture));
-        args.Add("-pix_fmt");
-        args.Add("yuv420p");
+        HardwareEncoder.AddVideoArguments(args, encoder, spec.HighQuality);
         args.Add("-movflags");
         args.Add("+faststart");
 
