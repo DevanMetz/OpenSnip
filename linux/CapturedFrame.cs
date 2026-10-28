@@ -12,6 +12,18 @@ sealed class CapturedFrame
     public int Height { get; }
     public byte[] Bgra { get; }
 
+    /// <summary>Desktop pixel of frame (0, 0). Set by the X11 capture; other backends leave it unknown.</summary>
+    public int OriginX { get; private set; }
+    public int OriginY { get; private set; }
+    public bool OriginKnown { get; private set; }
+
+    public void NoteOrigin(int x, int y)
+    {
+        OriginX = x;
+        OriginY = y;
+        OriginKnown = true;
+    }
+
     public CapturedFrame(int width, int height, byte[] bgra)
     {
         if (width <= 0 || height <= 0) throw new ArgumentException("Invalid image size");

@@ -411,8 +411,7 @@ sealed class App : Application
             if (hadThumbnail) await Task.Delay(100);
 
             var frame = await CaptureService.CaptureAsync();
-            var overlay = new OverlayWindow(frame, Settings, WindowsFor(frame), record: true);
-            var region = await overlay.SelectAsync();
+            var region = await OverlayWindow.SelectAsync(frame, Settings, WindowsFor(frame), record: true);
             if (region is not { } selected) return;
 
             var monitors = X11Monitors.Query();
@@ -493,12 +492,11 @@ sealed class App : Application
             if (delaySeconds > 0) await CountdownWindow.RunAsync(delaySeconds);
 
             var frame = await CaptureService.CaptureAsync();
-            var overlay = new OverlayWindow(frame, Settings, WindowsFor(frame));
-            var region = await overlay.SelectAsync();
+            var region = await OverlayWindow.SelectAsync(frame, Settings, WindowsFor(frame));
             if (region is not { } selected) return;
 
             _lastRegion = selected;
-            _lastScreen = SnipGeometry.ToScreen(selected, overlay.VirtualBounds, frame.Width, frame.Height);
+            _lastScreen = OverlayWindow.ScreenRect(frame, selected);
             var cropped = frame.Crop(selected.X, selected.Y, selected.Width, selected.Height);
             await DeliverAsync(cropped, _lastScreen.Value);
         }

@@ -117,7 +117,7 @@ Run `OpenSnip.exe --diagnostics` to write a report (displays, audio devices, and
 
 The Linux app is a separate native Avalonia build. It covers screenshots, annotation, pinned images, global shortcuts and screen recording on X11.
 
-**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; pinned images (under the pointer on X11, centered on Wayland); tray icon; global shortcuts and MP4 recording on X11; and settings.
+**What works:** X11 capture through libX11, with `maim`, ImageMagick `import` and `scrot` as fallbacks; Wayland capture through the `xdg-desktop-portal` Screenshot API, with `grim`, `gnome-screenshot` and `spectacle` as fallbacks; region, window, monitor and all-monitor selection with a magnifier and one overlay window per screen at its scale; clipboard as PNG; auto-save as PNG or JPG; preview; annotation; pinned images (under the pointer on X11, centered on Wayland); tray icon; global shortcuts and MP4 recording on X11; and settings. X11 capture includes outputs left of or above the origin.
 
 **Install:** download `OpenSnip-linux-x64.tar.gz` from [Releases](https://github.com/DevanMetz/OpenSnip/releases), then:
 
@@ -228,7 +228,8 @@ Issues and pull requests are welcome. The code is plain WinForms + GDI+; recordi
 | `linux/Program.cs` / `linux/App.cs` | Linux app startup, single instance, tray and snip flow |
 | `linux/Capture.cs` / `linux/DBus.cs` | X11, Wayland portal and external capture backends |
 | `linux/X11Windows.cs` | Top-level X11 windows for click-to-capture |
-| `linux/OverlayWindow.cs` | Linux selection overlay and magnifier |
+| `linux/OverlayWindow.cs` | Per-monitor Linux selection overlays and magnifier |
+| `linux/MonitorMap.cs` | Desktop-pixel mapping for mixed-DPI snips |
 | `linux/RecordingSession.cs` | X11 recording, red outline, and control bar |
 | `linux/PinWindow.cs` | Linux pinned images |
 | `linux/Annotation.cs` | Annotation shapes for the Linux editor |

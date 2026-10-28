@@ -11,11 +11,12 @@ Status of each Windows feature on Linux. This file describes the tree it ships w
 | Region snip on a frozen screen | working | `linux/Capture.cs`, `linux/OverlayWindow.cs` |
 | Click grabs the monitor | working | `linux/OverlayWindow.cs` |
 | Click grabs the window under the cursor | partial. X11 only | `linux/OverlayWindow.cs`, `src/CaptureOverlay.cs` |
-| `F` captures the monitor under the cursor immediately | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| `A` captures all monitors immediately | working. Recording selects the monitor under the cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| `F` selects the monitor; Enter captures it | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| `A` selects all monitors; Enter captures them | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
 | Enter confirms the selection or monitor; arrows nudge 1 px, or 10 with Shift | working. X11 warps the pointer; Wayland moves the overlay cursor. | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| Esc and right-click cancel the drag first, then the snip | working | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
-| Mixed-DPI placement | partial. The overlay uses one scale for the whole desktop. | `linux/OverlayWindow.cs` |
+| Esc and right-click cancel the snip | partial | `linux/SnipGesture.cs`, `linux/OverlayWindow.cs` |
+| Mixed-DPI placement | working on X11, with one window per monitor. Wayland cross-monitor drags are exact when scales match. | `linux/OverlayWindow.cs`, `linux/MonitorMap.cs`, `linux/X11Pointer.cs` |
+| X11 outputs left of or above the origin | working. Capture falls back to the root at (0, 0) if the server rejects the bounding box. | `linux/X11Randr.cs`, `linux/Capture.cs` |
 | Magnifier with coordinates | working | `linux/OverlayWindow.cs` |
 | Magnifier color | working | `linux/OverlayWindow.cs` |
 | X11 capture | working | `linux/Capture.cs` |
