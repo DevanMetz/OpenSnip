@@ -6,6 +6,7 @@ enum HotkeyCommand
     Snip,
     SnipDelay,
     Repeat,
+    Record,
 }
 
 /// <summary>
@@ -174,6 +175,7 @@ sealed class HotkeyBindings
     public HotkeyChord Snip { get; init; }
     public HotkeyChord Delay { get; init; }
     public HotkeyChord Repeat { get; init; }
+    public HotkeyChord Record { get; init; }
     public bool UsePrintScreen { get; init; }
 
     public static HotkeyBindings From(Settings settings) => new()
@@ -181,6 +183,7 @@ sealed class HotkeyBindings
         Snip = HotkeyChord.Parse(settings.SnipHotkey),
         Delay = HotkeyChord.Parse(settings.DelayHotkey),
         Repeat = HotkeyChord.Parse(settings.RepeatHotkey),
+        Record = HotkeyChord.Parse(settings.RecordHotkey),
         UsePrintScreen = settings.UsePrintScreen,
     };
 
@@ -194,6 +197,7 @@ sealed class HotkeyBindings
         if (!bindings.Snip.IsEmpty && chord == bindings.Snip) return HotkeyCommand.Snip;
         if (!bindings.Delay.IsEmpty && chord == bindings.Delay) return HotkeyCommand.SnipDelay;
         if (!bindings.Repeat.IsEmpty && chord == bindings.Repeat) return HotkeyCommand.Repeat;
+        if (!bindings.Record.IsEmpty && chord == bindings.Record) return HotkeyCommand.Record;
         if (bindings.UsePrintScreen && chord.Key == "PrintScreen" && !chord.Alt && !chord.Win)
         {
             if (chord.Ctrl) return HotkeyCommand.Repeat;
@@ -217,6 +221,7 @@ sealed class HotkeyBindings
             Add(Snip);
             Add(Delay);
             Add(Repeat);
+            Add(Record);
             if (UsePrintScreen)
             {
                 Add(new HotkeyChord("PrintScreen", false, false, false, false));
@@ -282,6 +287,7 @@ static class HotkeyGrabs
         Consider(bindings.Snip);
         Consider(bindings.Delay);
         Consider(bindings.Repeat);
+        Consider(bindings.Record);
         if (bindings.UsePrintScreen)
         {
             Consider(new HotkeyChord("PrintScreen", false, false, false, false));

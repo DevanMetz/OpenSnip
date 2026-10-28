@@ -72,12 +72,45 @@ public class HotkeyTests
     }
 
     [Fact]
-    public void DefaultSummaryMatchesTheWindowsDefaults()
+    public void DefaultSummaryIncludesRecording()
     {
         Assert.Equal(
-            "Win + Shift + S, PrtSc, Shift + PrtSc, Ctrl + PrtSc",
+            "Win + Shift + S, Win + Shift + R, PrtSc, Shift + PrtSc, Ctrl + PrtSc",
             HotkeyBindings.From(new Settings()).Summary);
         Assert.Equal("off", new HotkeyBindings().Summary);
+    }
+
+    [Fact]
+    public void RecordingUsesConfiguredChordAndLockVariants()
+    {
+        var settings = new Settings();
+        var chord = HotkeyChord.Parse("Win+Shift+R");
+        var bindings = HotkeyBindings.From(settings);
+        Assert.Equal(chord, bindings.Record);
+        Assert.Equal(HotkeyCommand.Record, HotkeyBindings.Match(chord, bindings));
+        var grabs = HotkeyGrabs.Plan(bindings, key => key == "R" ? 27 : 0, 8, 64);
+        Assert.Equal(HotkeyGrabs.LockExtras.Length, grabs.Count);
+        Assert.All(grabs, grab => Assert.Equal(HotkeyCommand.Record, grab.Command));
+        Assert.Contains(grabs, grab => grab.Modifiers == (64 | HotkeyGrabs.ShiftMask));
+
+        settings.RecordHotkey = "Ctrl+Alt+F8";
+        bindings = HotkeyBindings.From(settings);
+        Assert.Null(HotkeyBindings.Match(chord, bindings));
+        Assert.Equal(HotkeyCommand.Record, HotkeyBindings.Match(HotkeyChord.Parse(settings.RecordHotkey), bindings));
+        settings.RecordHotkey = "";
+        Assert.True(HotkeyBindings.From(settings).Record.IsEmpty);
+        settings.RecordHotkey = "R";
+        Assert.Empty(HotkeyGrabs.Plan(HotkeyBindings.From(settings), key => key == "R" ? 27 : 0, 8, 64));
+    }
+
+    [Fact]
+    public void DuplicateRecordingChordKeepsExistingPriority()
+    {
+        var chord = HotkeyChord.Parse("Win+Shift+R");
+        var bindings = new HotkeyBindings { Snip = chord, Record = chord };
+        var grabs = HotkeyGrabs.Plan(bindings, _ => 27, 8, 64);
+        Assert.Equal(HotkeyGrabs.LockExtras.Length, grabs.Count);
+        Assert.All(grabs, grab => Assert.Equal(HotkeyCommand.Snip, grab.Command));
     }
 
     [Fact]
